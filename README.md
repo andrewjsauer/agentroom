@@ -34,6 +34,21 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/PLAN.md` | Milestones with task checklists and acceptance criteria. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
+## Development
+
+Requires Node 20.19 or newer and pnpm 10 (the exact version is pinned in `package.json` under `packageManager`; `corepack enable` picks it up).
+
+```
+pnpm install
+pnpm build       # tsup build of every package
+pnpm typecheck   # tsc --noEmit in every package
+pnpm lint        # Biome lint, format check, and import sorting
+pnpm test        # vitest in every package
+pnpm format      # Biome format, writes changes
+```
+
+Packages live under `packages/`: `protocol`, `relay-node`, `mcp`, and `cli` (published as `agentroom`).
+
 ## Status
 
-Pre-code. Design captured October 11, 2026.
+Workspace scaffold (Milestone 0): four skeleton packages with build, typecheck, lint, test, and CI. No product behavior yet. Design captured October 11, 2026.
