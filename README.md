@@ -10,7 +10,7 @@ Coworker: npx agentsync join as1_k7Fq...9Wd --agent codex
           -> Joined. Restart your agent session to load the tools.
 ```
 
-Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`, `export`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentsync down`, or the room sits idle, it is deleted.
+Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentsync down`, or the room sits idle, it is deleted.
 
 ## Why
 

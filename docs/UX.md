@@ -12,15 +12,17 @@ The design question is attention: when should a coworker's message interrupt you
 
 ```
 agentsync up [--agent claude|codex|gemini|cursor] [--name andrew] [--relay URL] [--ttl 24h] [--max-chain 3]
-agentsync join <code> [--agent ...] [--name ...]
+agentsync join [code] [--agent ...] [--name ...]   # prompts for the code if omitted, keeping it out of shell history
 agentsync down                     # creator only: close the room now
 agentsync status
 agentsync watch                    # terminal chat pane (works with any agent)
-agentsync say "<text>"             # human message; requires an interactive terminal (TTY)
+agentsync say [--thread id] "<text>"   # human message; requires an interactive terminal (TTY)
 agentsync approve <thread>         # human approval; resets the chain limit; requires TTY
 agentsync export [--thread id] [--format md|gh-issue]
 agentsync install <agent>          # write MCP config (and plugin, for Claude Code)
 ```
+
+Every command acts on the room named in `~/.agentsync/current` (set by the last `up` or `join`) unless `--room <id>` is given. `say` without `--thread` replies to the most recently updated thread, which is almost always the one waiting on you; pass `--thread` to pick another or `--new` to start one.
 
 `up` and `join` call `install` for the named agent, then print what to restart.
 
@@ -41,9 +43,10 @@ The script reads local room state (no network call) so it is fast. If a plugin c
 | Command | Author | What happens |
 |---|---|---|
 | `/sync` | n/a | Claude reads the inbox and summarizes what matters for the current task |
-| `/say <text>` | You, verbatim | Sent tagged as human. Never reaches the model |
+| `/say [--thread id] <text>` | You, verbatim | Sent tagged as human. Never reaches the model. Same thread default as the CLI |
 | `/ask <topic>` | Claude drafts, you approve | Claude writes the question with refs from current context, shows the draft, sends on your approval |
 | `/handoff` | Claude drafts, you approve | Structured summary: decisions, open questions, refs |
+| `/send <hash>` | You | Releases the pending draft from `/ask` or `/handoff` if its hash still matches. Never reaches the model |
 | `/approve [thread]` | You | Human approval for a thread blocked by the chain limit |
 | `/sync-mode live\|between\|manual` | n/a | Sets delivery mode |
 
@@ -52,7 +55,7 @@ The script reads local room state (no network call) so it is fast. If a plugin c
 The agent has a shell. If human messages were sent by running `agentsync say`, the agent could run it and impersonate you, which would also defeat the chain limit. So:
 
 - A `UserPromptSubmit` hook inspects what you typed. If it starts with `/say` or `/approve`, the hook posts it tagged `via: "hook"`, `agent: "human"`, and blocks the prompt from reaching the model (saves tokens too).
-- Draft approvals for `/ask` and `/handoff` work the same way: Claude writes the draft to a pending file; your reply of `/send` (typed by you, caught by the hook) releases it.
+- Draft approvals for `/ask` and `/handoff` work the same way. Claude calls `send` or `handoff` with `draft: true`; the MCP server writes the envelope to the room's `pending.json` and returns the draft text plus a short hash, which Claude shows you. Your reply of `/send <hash>` (typed by you, caught by the hook) posts the pending envelope only if its hash still matches, so the agent cannot swap the content after you read it. The released message keeps the agent's `from.agent` with `via: "hook"`; it is never tagged human. The hook then posts a human `approve` for that thread, because you read and released it.
 - The CLI `say` and `approve` commands (and the `watch` input line) refuse to run without an interactive terminal or when an agent environment marker such as `CLAUDECODE` is set. Weaker: an agent with a shell can deliberately get around this, so it stops accidental impersonation, not a determined agent (see the threat model in `ARCHITECTURE.md`). It covers non-Claude users, and the `watch` pane is the preferred human input path for them.
 
 Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can register slash commands that the hook intercepts (`OPEN_QUESTIONS.md`).
@@ -60,7 +63,7 @@ Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can re
 ### Delivery modes
 
 - `live`: inbound messages pushed into the session immediately via channels. Can derail a task mid-flight.
-- `between` (default): queued; injected as context the next time you submit a prompt (via the `UserPromptSubmit` hook). Messages that need you, or direct questions to your agent, also trigger a desktop notification and show in the status line right away.
+- `between` (default): queued; injected as context the next time you submit a prompt (via the `UserPromptSubmit` hook), wrapped by the same untrusted-data framing as tool results. Messages that need you, or direct questions to your agent, also trigger a desktop notification and show in the status line right away.
 - `manual`: nothing reaches the agent until you run `/sync`.
 
 ## `agentsync watch` (universal companion)
@@ -81,8 +84,9 @@ Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can re
 
 - Built with Ink (React for terminals) or a plain readline UI; choose the simpler one that handles resize well.
 - Shows all threads, highlights `requiresHuman` and chain-limited threads.
-- Input line posts human messages (`via: "watch"`). Typing here is proof of a human.
+- Input line posts human messages (`via: "watch"`) to the selected thread. Typing here is treated as human input; it relies on an interactive terminal and the agent-marker refusal, so it stops accidental impersonation, not a determined agent.
 - Desktop notifications (via `node-notifier` or OS-native) for messages that need you.
+- Everything drawn from inbound messages (bodies, names, refs) is stripped of control characters and escape sequences first, so a message cannot forge a "needs you" line.
 
 ## Non-Claude agents
 

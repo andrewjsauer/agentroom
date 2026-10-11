@@ -26,6 +26,6 @@ Verify each item against current official docs before building the part that dep
 
 ## Product and legal
 
-14. **Client contract.** Confirm the client allows this tool on their project. Refs-only messages, end-to-end encryption, and secret scanning help, but it is the client's call.
+14. **Client contract.** Confirm the client allows this tool on their project. End-to-end encryption and secret scanning help, but it is the client's call. Be precise with them: refs-only is an instruction to the agent, not an enforced control; a body can carry up to 8,000 characters of arbitrary text, code included, visible to every room member.
 15. **License.** MIT or Apache-2.0.
 16. **Hosted relay abuse.** Rate limits and size caps are enough for v0? Consider a per-IP room creation cap.

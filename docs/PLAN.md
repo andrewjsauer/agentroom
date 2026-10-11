@@ -21,10 +21,10 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 
 - [ ] `protocol`: `Envelope` schema, relay wire schemas, ULID ids, share-code generate and parse.
 - [ ] `protocol` crypto: HKDF room_id and key derivation, XChaCha20-Poly1305 envelopes, associated data = room_id. Tests: round trip, tamper, wrong key, wrong room.
-- [ ] `relay-node`: rooms, ring buffer, seq numbers, resume with `since`, idle TTL, size limit.
-- [ ] `mcp`: stdio server with `room_status`, `send`, `inbox`, `wait`; local room state file; reconnect with backoff; drop envelopes whose id was already seen (relay replay).
+- [ ] `relay-node`: create vs join `hello` (room settings and close key pinned at creation, `room_not_found` for unknown ids), bounded buffer, seq numbers, resume with `since`, idle TTL, size limit.
+- [ ] `mcp`: stdio server with `room_status`, `send`, `inbox`, `wait`; local room directory (`room.json`, `queue.jsonl`, `status.json`); rebuild history from `since=0` on startup; reconnect with backoff; drop envelopes whose id was already seen (relay replay).
 - [ ] `cli`: `up`, `join`, `status`, `install claude` (writes MCP config via `claude mcp add` or settings, whichever is current).
-- [ ] Inbound framing as untrusted data in `inbox` and `wait` results.
+- [ ] Inbound framing as untrusted data (`frameInbound` in `protocol`, nonce-suffixed tag, escaping, tamper tests) used by `inbox` and `wait` results.
 - [ ] Conformance test: two scripted MCP clients against a local relay exchange messages, resume after disconnect, see each other's presence, and the relay's stored blobs contain no plaintext.
 - [ ] Deploy `relay-node` somewhere reachable for the real test (Fly.io, Railway, or a small VM behind TLS). **Human step:** needs a hosting account.
 
@@ -34,11 +34,11 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 
 ## Milestone 2: Safe to use (week 2)
 
-- [ ] Creator-only `down` (signed close).
-- [ ] Chain limit in `protocol`, enforced in `mcp` `send`, with tests for reset on human message and on `approve`.
-- [ ] Secret scanner in `protocol` with fixtures; wired into `send`.
-- [ ] `cli`: `say` and `approve` with TTY check and refusal when an agent environment marker is set (e.g. `CLAUDECODE`); `export` to markdown and `gh-issue`; `down`.
-- [ ] `handoff` tool with fixed template.
+- [ ] Creator-only `down`: Ed25519 close key pinned at the creating `hello`, `close` signed over `room_id || nonce`; relay tests for wrong key, non-creator, and replay.
+- [ ] Chain limit in `protocol`, enforced in `mcp` `send`, with tests for reset on human message and on `approve`, `thread` derived from `replyTo`, presence ignored, and the room-wide counter catching a new-thread-per-message loop.
+- [ ] Secret scanner in `protocol` with fixtures; enforced in the shared seal-and-post path used by MCP `send`, hook, `watch` and CLI `say`, with a blocked-fake-AWS-key test per path.
+- [ ] `cli`: `say` and `approve` with TTY check and refusal when an agent environment marker is set (e.g. `CLAUDECODE`); `export` to markdown and `gh-issue` (body via `--body-file`, never inline; test with a `$(touch pwned)` body); `down`.
+- [ ] `handoff` tool with fixed template; `draft: true` on `send` and `handoff` writes `pending.json` and returns text plus hash.
 - [ ] Max age TTL, rate limit, member cap, `room_expired` handling end to end.
 - [ ] `agentsync-rules` MCP prompt.
 - [ ] Threat model section in README.
@@ -47,11 +47,11 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 
 ## Milestone 3: Claude Code plugin and humans (week 3)
 
-- [ ] `plugins/claude-code`: manifest bundling the MCP server, slash commands (`/sync`, `/say`, `/ask`, `/handoff`, `/approve`, `/sync-mode`), `UserPromptSubmit` hook, status line script.
-- [ ] Hook-based human sending with prompt blocking; draft-and-approve flow for `/ask` and `/handoff`.
+- [ ] `plugins/claude-code`: manifest bundling the MCP server, slash commands (`/sync`, `/say`, `/ask`, `/handoff`, `/send`, `/approve`, `/sync-mode`), `UserPromptSubmit` hook, status line script.
+- [ ] Hook-based human sending with prompt blocking; draft-and-approve flow for `/ask` and `/handoff` (`/send <hash>` refuses when `pending.json` changed after display; test it); hook-injected context uses `frameInbound`.
 - [ ] Delivery modes: `between` (default) via the hook, `manual`, and `live` via channels if available.
 - [ ] Desktop notifications for `requiresHuman` and direct questions.
-- [ ] `agentsync watch` terminal pane with input line.
+- [ ] `agentsync watch` terminal pane with input line; control characters stripped from rendered strings.
 
 **Accept:** a full day of real use on the client SDK without copy-pasting between agents; neither person missed a message that needed them.
 
@@ -59,7 +59,7 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 
 - [ ] Adapters: `install codex`, `install gemini`, `install cursor` (MCP config plus `AGENTS.md` / `GEMINI.md` snippet).
 - [ ] Confirm each agent calls `inbox` and `wait` when instructed; document actual behavior honestly in README.
-- [ ] `relay-cf`: Cloudflare Worker plus Durable Object with hibernation and alarms; passes the shared relay conformance suite.
+- [ ] `relay-cf`: Cloudflare Worker plus Durable Object with hibernation and alarms; buffer, seq, close key and meta in Durable Object storage, `deleteAll()` on expiry and close; passes the shared relay conformance suite.
 - [ ] Manual pre-release checklist covering Claude Code, Codex, and Gemini against the same room.
 - [ ] README: quickstart, demo GIF, threat model, self-hosting guide.
 - [ ] Publish to npm; tag v0.1.0.
