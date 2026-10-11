@@ -24,7 +24,13 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.43)
 
+  packages/cli: {}
+
+  packages/mcp: {}
+
   packages/protocol: {}
+
+  packages/relay-node: {}
 
 packages:
 
