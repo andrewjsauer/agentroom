@@ -4,14 +4,16 @@ Each milestone ends with acceptance criteria. Do not start the next milestone un
 
 ## Milestone 0: Verify and scaffold (half a day)
 
-- [ ] Work through `OPEN_QUESTIONS.md` items marked **M0**; record findings with dates and URLs.
-- [ ] Check the name `agentroom` on npm and GitHub; pick an alternative if taken and update docs.
-- [ ] pnpm workspace with `packages/protocol`, `packages/relay-node`, `packages/mcp`, `packages/cli`.
-- [ ] Shared `tsconfig`, lint and format config, vitest, tsup, a root `pnpm -r test` script.
-- [ ] GitHub Actions CI: install, typecheck, lint, test on Node 20 and 22.
-- [ ] MIT or Apache-2.0 license (decide; Apache-2.0 includes a patent grant).
+- [x] Work through `OPEN_QUESTIONS.md` items marked **M0**; record findings with dates and URLs.
+- [x] Check the name `agentroom` on npm and GitHub; pick an alternative if taken and update docs.
+- [x] pnpm workspace with `packages/protocol`, `packages/relay-node`, `packages/mcp`, `packages/cli`.
+- [x] Shared `tsconfig`, lint and format config, vitest, tsup, a root `pnpm -r test` script.
+- [x] GitHub Actions CI: install, typecheck, lint, test on Node 20 and 22.
+- [x] MIT or Apache-2.0 license (decide; Apache-2.0 includes a patent grant).
 
 **Accept:** `pnpm -r build && pnpm -r test` green locally and in CI.
+
+Status 2026-10-11: all gates green locally (Node 26 and Node 20.20.2). The GitHub Actions run needs the repo created and pushed (waiting on Andrew, see `LOG.md`).
 
 ## Milestone 1: Core loop, encrypted (weekend 1)
 
