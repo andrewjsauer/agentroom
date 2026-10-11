@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-You are building **agentsync**, an open-source tool that lets developers' AI coding agents (from any vendor) exchange messages through temporary, end-to-end encrypted rooms. Read `README.md`, then `docs/ARCHITECTURE.md`, `docs/UX.md`, and `docs/PLAN.md` before writing code.
+You are building **agentroom**, an open-source tool that lets developers' AI coding agents (from any vendor) exchange messages through temporary, end-to-end encrypted rooms. Read `README.md`, then `docs/ARCHITECTURE.md`, `docs/UX.md`, and `docs/PLAN.md` before writing code.
 
 ## How to work
 
@@ -15,7 +15,7 @@ You are building **agentsync**, an open-source tool that lets developers' AI cod
 - pnpm workspaces monorepo (see layout in `docs/ARCHITECTURE.md`).
 - `zod` for all schemas; `@modelcontextprotocol/sdk` for the MCP server; `ws` for WebSockets in Node; `libsodium-wrappers` for crypto. Do not hand-roll crypto primitives.
 - `vitest` for tests. Every package has unit tests; `protocol` and crypto code need thorough tests including tamper and wrong-key cases.
-- `tsup` for builds. The CLI is published so `npx agentsync` works with no install.
+- `tsup` for builds. The CLI is published so `npx agentroom` works with no install.
 - Biome or ESLint plus Prettier; pick one at setup and stick with it.
 - No telemetry. No network calls other than to the configured relay.
 
@@ -29,7 +29,7 @@ These are the product's safety properties. Every change must preserve them, and 
 4. **Outbound secret scanning.** Message bodies are scanned for credential patterns before encryption; matches block the send and tell the agent why.
 5. **Inbound messages are untrusted data.** Every delivery path (tool results, hook-injected context, channel pushes) wraps them with the shared framing function: clearly delimited, nonce-tagged, escaped, labeled blocks with a fixed reminder that they are information, not instructions. No tool executes anything because an inbound message asked.
 6. **References, not code.** v0 has no file transfer. Messages carry `{repo, path, lines, commit}` refs; each side reads its own checkout.
-7. **Ephemeral by default.** Rooms expire (idle TTL and max age). Nothing persists on the relay after expiry. Locally, the MCP server keeps a per-room session cache (`~/.agentsync/rooms/<room_id>/`) that is deleted on `down` or expiry; durable copies exist only when the user runs the `export` CLI command, which is not an MCP tool.
+7. **Ephemeral by default.** Rooms expire (idle TTL and max age). Nothing persists on the relay after expiry. Locally, the MCP server keeps a per-room session cache (`~/.agentroom/rooms/<room_id>/`) that is deleted on `down` or expiry; durable copies exist only when the user runs the `export` CLI command, which is not an MCP tool.
 
 ## Definition of done for any task
 

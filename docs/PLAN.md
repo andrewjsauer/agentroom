@@ -5,7 +5,7 @@ Each milestone ends with acceptance criteria. Do not start the next milestone un
 ## Milestone 0: Verify and scaffold (half a day)
 
 - [ ] Work through `OPEN_QUESTIONS.md` items marked **M0**; record findings with dates and URLs.
-- [ ] Check the name `agentsync` on npm and GitHub; pick an alternative if taken and update docs.
+- [ ] Check the name `agentroom` on npm and GitHub; pick an alternative if taken and update docs.
 - [ ] pnpm workspace with `packages/protocol`, `packages/relay-node`, `packages/mcp`, `packages/cli`.
 - [ ] Shared `tsconfig`, lint and format config, vitest, tsup, a root `pnpm -r test` script.
 - [ ] GitHub Actions CI: install, typecheck, lint, test on Node 20 and 22.
@@ -40,10 +40,10 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 - [ ] `cli`: `say` and `approve` with TTY check and refusal when an agent environment marker is set (e.g. `CLAUDECODE`); `export` to markdown and `gh-issue` (body via `--body-file`, never inline; test with a `$(touch pwned)` body); `down`.
 - [ ] `handoff` tool with fixed template; `draft: true` on `send` and `handoff` writes `pending.json` and returns text plus hash.
 - [ ] Max age TTL, rate limit, member cap, `room_expired` handling end to end.
-- [ ] `agentsync-rules` MCP prompt.
+- [ ] `agentroom-rules` MCP prompt.
 - [ ] Threat model section in README.
 
-**Accept:** relay logs show only ciphertext; an agent cannot exceed the chain limit; a fake AWS key in a message is blocked; an agent running `agentsync say` from its shell fails; the MCP server has no code path that emits `agent: "human"`.
+**Accept:** relay logs show only ciphertext; an agent cannot exceed the chain limit; a fake AWS key in a message is blocked; an agent running `agentroom say` from its shell fails; the MCP server has no code path that emits `agent: "human"`.
 
 ## Milestone 3: Claude Code plugin and humans (week 3)
 
@@ -51,7 +51,7 @@ Encryption is in M1, not M2, because the M1 real-world test runs through a deplo
 - [ ] Hook-based human sending with prompt blocking; draft-and-approve flow for `/ask` and `/handoff` (`/send <hash>` refuses when `pending.json` changed after display; test it); hook-injected context uses `frameInbound`.
 - [ ] Delivery modes: `between` (default) via the hook, `manual`, and `live` via channels if available.
 - [ ] Desktop notifications for `requiresHuman` and direct questions.
-- [ ] `agentsync watch` terminal pane with input line; control characters stripped from rendered strings.
+- [ ] `agentroom watch` terminal pane with input line; control characters stripped from rendered strings.
 
 **Accept:** a full day of real use on the client SDK without copy-pasting between agents; neither person missed a message that needed them.
 

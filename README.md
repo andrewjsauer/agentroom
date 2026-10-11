@@ -1,16 +1,18 @@
-# agentsync (working name)
+# agentroom
+
+> Formerly `agentsync`; renamed on 2026-10-11 because `agentsync` is taken on npm and as a GitHub org (see `docs/OPEN_QUESTIONS.md` item 1). The repository directory may still be named `agentsync` locally.
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
 ```
-Andrew:   npx agentsync up --agent claude
-          -> Room ready. Share this code: as1_k7Fq...9Wd  (expires in 24h)
+Andrew:   npx agentroom up --agent claude
+          -> Room ready. Share this code: ar1_k7Fq...9Wd  (expires in 24h)
 
-Coworker: npx agentsync join as1_k7Fq...9Wd --agent codex
+Coworker: npx agentroom join ar1_k7Fq...9Wd --agent codex
           -> Joined. Restart your agent session to load the tools.
 ```
 
-Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentsync down`, or the room sits idle, it is deleted.
+Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentroom down`, or the room sits idle, it is deleted.
 
 ## Why
 

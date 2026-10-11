@@ -4,7 +4,7 @@ Verify each item against current official docs before building the part that dep
 
 ## M0: before writing code
 
-1. **Name availability.** Is `agentsync` free on npm and as a GitHub org or repo? If not, choose another name.
+1. **Name availability.** Is `agentroom` free on npm and as a GitHub org or repo? If not, choose another name.
 2. **MCP TypeScript SDK.** Current package name, version, stdio server API, and how to declare tools and prompts.
 3. **Claude Code MCP config.** Current way to add a stdio MCP server per project and per user (`claude mcp add` flags, `.mcp.json` format).
 

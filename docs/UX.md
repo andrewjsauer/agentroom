@@ -11,18 +11,18 @@ The design question is attention: when should a coworker's message interrupt you
 ## CLI
 
 ```
-agentsync up [--agent claude|codex|gemini|cursor] [--name andrew] [--relay URL] [--ttl 24h] [--max-chain 3]
-agentsync join [code] [--agent ...] [--name ...]   # prompts for the code if omitted, keeping it out of shell history
-agentsync down                     # creator only: close the room now
-agentsync status
-agentsync watch                    # terminal chat pane (works with any agent)
-agentsync say [--thread id] "<text>"   # human message; requires an interactive terminal (TTY)
-agentsync approve <thread>         # human approval; resets the chain limit; requires TTY
-agentsync export [--thread id] [--format md|gh-issue]
-agentsync install <agent>          # write MCP config (and plugin, for Claude Code)
+agentroom up [--agent claude|codex|gemini|cursor] [--name andrew] [--relay URL] [--ttl 24h] [--max-chain 3]
+agentroom join [code] [--agent ...] [--name ...]   # prompts for the code if omitted, keeping it out of shell history
+agentroom down                     # creator only: close the room now
+agentroom status
+agentroom watch                    # terminal chat pane (works with any agent)
+agentroom say [--thread id] "<text>"   # human message; requires an interactive terminal (TTY)
+agentroom approve <thread>         # human approval; resets the chain limit; requires TTY
+agentroom export [--thread id] [--format md|gh-issue]
+agentroom install <agent>          # write MCP config (and plugin, for Claude Code)
 ```
 
-Every command acts on the room named in `~/.agentsync/current` (set by the last `up` or `join`) unless `--room <id>` is given. `say` without `--thread` replies to the most recently updated thread, which is almost always the one waiting on you; pass `--thread` to pick another or `--new` to start one.
+Every command acts on the room named in `~/.agentroom/current` (set by the last `up` or `join`) unless `--room <id>` is given. `say` without `--thread` replies to the most recently updated thread, which is almost always the one waiting on you; pass `--thread` to pick another or `--new` to start one.
 
 `up` and `join` call `install` for the named agent, then print what to restart.
 
@@ -33,10 +33,10 @@ One install bundles the MCP server, slash commands, hooks, and a status line scr
 ### Status line
 
 ```
-agentsync * sdk-parity | 2 unread (1 needs you) | coworker/codex active
+agentroom * sdk-parity | 2 unread (1 needs you) | coworker/codex active
 ```
 
-The script reads local room state (no network call) so it is fast. If a plugin cannot set the status line itself, `agentsync install claude` writes it into settings and preserves any existing status line by chaining it.
+The script reads local room state (no network call) so it is fast. If a plugin cannot set the status line itself, `agentroom install claude` writes it into settings and preserves any existing status line by chaining it.
 
 ### Slash commands
 
@@ -52,7 +52,7 @@ The script reads local room state (no network call) so it is fast. If a plugin c
 
 ### Why human messages go through a hook
 
-The agent has a shell. If human messages were sent by running `agentsync say`, the agent could run it and impersonate you, which would also defeat the chain limit. So:
+The agent has a shell. If human messages were sent by running `agentroom say`, the agent could run it and impersonate you, which would also defeat the chain limit. So:
 
 - A `UserPromptSubmit` hook inspects what you typed. If it starts with `/say` or `/approve`, the hook posts it tagged `via: "hook"`, `agent: "human"`, and blocks the prompt from reaching the model (saves tokens too).
 - Draft approvals for `/ask` and `/handoff` work the same way. Claude calls `send` or `handoff` with `draft: true`; the MCP server writes the envelope to the room's `pending.json` and returns the draft text plus a short hash, which Claude shows you. Your reply of `/send <hash>` (typed by you, caught by the hook) posts the pending envelope only if its hash still matches, so the agent cannot swap the content after you read it. The released message keeps the agent's `from.agent` with `via: "hook"`; it is never tagged human. The hook then posts a human `approve` for that thread, because you read and released it.
@@ -66,7 +66,7 @@ Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can re
 - `between` (default): queued; injected as context the next time you submit a prompt (via the `UserPromptSubmit` hook), wrapped by the same untrusted-data framing as tool results. Messages that need you, or direct questions to your agent, also trigger a desktop notification and show in the status line right away.
 - `manual`: nothing reaches the agent until you run `/sync`.
 
-## `agentsync watch` (universal companion)
+## `agentroom watch` (universal companion)
 
 ```
 + sdk-parity ------------------------------- 2 members +
@@ -90,8 +90,8 @@ Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can re
 
 ## Non-Claude agents
 
-- `agentsync install codex|gemini|cursor` writes the MCP server entry into that agent's config and appends a short snippet to the repo's `AGENTS.md` or `GEMINI.md`:
-  > This project uses agentsync. At the start of each task and after finishing each step, call the `inbox` tool. When you are waiting on the other team, call `wait`.
+- `agentroom install codex|gemini|cursor` writes the MCP server entry into that agent's config and appends a short snippet to the repo's `AGENTS.md` or `GEMINI.md`:
+  > This project uses agentroom. At the start of each task and after finishing each step, call the `inbox` tool. When you are waiting on the other team, call `wait`.
 - These agents receive messages when they check, not on push. Say so plainly in the README.
 
 ## Later: editor gutter
