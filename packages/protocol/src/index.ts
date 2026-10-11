@@ -1,5 +1,6 @@
 export * from "./crypto.js";
 export * from "./envelope.js";
+export * from "./frame.js";
 export * from "./meta.js";
 export * from "./share-code.js";
 export * from "./ulid.js";
