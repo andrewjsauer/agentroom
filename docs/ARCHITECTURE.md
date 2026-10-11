@@ -155,11 +155,19 @@ Launched by the agent as a stdio server: `agentroom mcp --room <room_id>`.
 
 ### Local state and process model
 
-- `~/.agentroom/rooms/<room_id>/room.json` (`0600`): share secret, member name, the creator's close secret key if this machine created the room, last seen seq. `~/.agentroom/current` names the room the CLI, hook and status line act on; `up` and `join` set it, and every command accepts `--room <id>` to override.
+- `~/.agentroom/rooms/<room_id>/room.json` (`0600`): share secret, member name, agent, relay URL, and the creator's close secret key if this machine created the room. `$AGENTROOM_HOME` overrides `~/.agentroom`. `~/.agentroom/current` names the room the CLI, hook and status line act on; `up` and `join` set it, and every command accepts `--room <id>` to override.
 - The MCP server is the only long-lived relay client per agent session. It appends decrypted inbound envelopes to `<room>/queue.jsonl` (`0600`) and keeps `<room>/status.json` (unread and needs-you counts, members, expiry) for the status line, which makes no network calls. The hook drains the queue under a file lock. Seen envelope ids live in the queue, so a replayed envelope (same id, new seq) is dropped even after a restart.
 - Short-lived commands (`say`, `approve`, `status`, `down`, `export`) open a one-shot relay connection using `room.json`.
 - On startup the MCP server fetches `since=0` to rebuild thread history for the chain limit and unread state.
 - The whole `<room>/` directory is deleted on `down` or when the room is found expired. It is a session cache, not a log; durable copies exist only when the user runs `export`.
+
+Local state contract (milestone 1):
+
+- Room directories are `0700`; `room.json`, `queue.jsonl` and `status.json` are `0600`.
+- Only `up` and `join` write `room.json`, atomically (temp file, then rename). It holds no fast-changing fields: the last seen seq lives in memory and in `status.json`, so a torn write cannot lose the secret.
+- `queue.jsonl` is an append-only event log of `{t:"msg", seq, env, own}` and `{t:"read", ids}` lines, each written with one `O_APPEND` write. It is never drained or rewritten, so it is also the seen-id set across restarts. Startup replays it to rebuild seen ids, unread state and history; an unparseable (torn) line is skipped.
+- `status.json` is rewritten atomically on each state change: connection state, live connection count, members seen, unread and needs-you counts, decrypt failures, `expiresAt`, `lastSeq`, `updatedAt`.
+- Own messages and `presence` envelopes are stored but never unread. Pre-join history replayed on first start counts as unread.
 
 Tools:
 
