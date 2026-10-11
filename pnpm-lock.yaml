@@ -24,6 +24,8 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.43)
 
+  packages/protocol: {}
+
 packages:
 
   '@biomejs/biome@2.5.15':
