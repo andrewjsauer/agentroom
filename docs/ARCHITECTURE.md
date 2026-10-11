@@ -69,6 +69,16 @@ Creating and joining are distinct. Only `up` sends `hello` with `create`; the re
 
 `close` is accepted only when `sig` verifies under the pinned `closeKey` over `room_id || nonce`, where `nonce` is issued per connection in `welcome`, so a captured `close` cannot be replayed. The relay broadcasts `closed` and deletes the room. Verification lands in milestone 2; the `create` shape is in milestone 1 so the protocol does not change under the deployed relay.
 
+Wire behavior fixed in milestone 1 (both relays must match it):
+
+- `msg` goes to every connection in the room, the sender included. The echo is the sender's confirmation and carries its seq.
+- `hello` without `since` replays nothing. `since: n` replays buffered envelopes with seq > n, in order, before any live frame.
+- `welcome.seq` is the head seq at the moment of the welcome, so a client knows catch-up is complete once it has seen that seq.
+- `presence{members}` is broadcast to the other connections on every connect and disconnect.
+- The 64 KiB envelope limit counts decoded blob bytes. The WebSocket frame limit is 96 KiB, which also bounds `hello` and `meta`.
+- Idle means no `put` and no `hello`. An open but silent connection does not keep a room alive. On expiry the relay sends `error{room_expired}` to each open connection before closing it and dropping the room.
+- Until milestone 2, `close` is rejected with `error{bad_proto, "close is not supported until protocol M2"}` rather than accepted unsigned, so no member can delete a room by knowing its id.
+
 Two implementations share the same protocol and a shared conformance test suite:
 
 - `relay-node`: a ~200-line server for self-hosting and local dev.

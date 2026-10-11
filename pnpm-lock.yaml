@@ -37,7 +37,18 @@ importers:
         specifier: ^4.6.6
         version: 4.6.6
 
-  packages/relay-node: {}
+  packages/relay-node:
+    dependencies:
+      '@agentroom/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.2
 
 packages:
 
@@ -562,6 +573,9 @@ packages:
   '@types/node@20.19.43':
     resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
 
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
+
   '@vitest/expect@3.2.7':
     resolution: {integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==}
 
@@ -959,6 +973,18 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
+  ws@8.22.0:
+    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   zod@4.6.6:
     resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
@@ -1259,6 +1285,10 @@ snapshots:
   '@types/node@20.19.43':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 20.19.43
 
   '@vitest/expect@3.2.7':
     dependencies:
@@ -1688,5 +1718,7 @@ snapshots:
     dependencies:
       siginfo: 2.0.0
       stackback: 0.0.2
+
+  ws@8.22.0: {}
 
   zod@4.6.6: {}

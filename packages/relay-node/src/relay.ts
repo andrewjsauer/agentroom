@@ -1,0 +1,262 @@
+import { randomBytes } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import {
+  ClientFrame,
+  type ErrorCode,
+  type HelloFrame,
+  type RelayFrame,
+} from "@agentroom/protocol";
+import { type WebSocket, WebSocketServer } from "ws";
+
+/** Structured relay event. Never carries a blob or meta (invariant 1). */
+export type RelayEvent =
+  | { event: "room_created"; room: string }
+  | { event: "room_expired"; room: string }
+  | { event: "conn_open"; room: string; members: number }
+  | { event: "conn_close"; room: string; members: number }
+  | { event: "error"; code: ErrorCode };
+
+export interface RelayOptions {
+  port: number;
+  host?: string;
+  idleTtlSec?: number;
+  bufferSize?: number;
+  maxEnvelopeBytes?: number;
+  sweepIntervalMs?: number;
+  /** Stored only; enforced in M2. */
+  maxAgeSec?: number;
+  /** Stored only; enforced in M2. */
+  maxMembers?: number;
+  now?: () => number;
+  log?: (event: RelayEvent) => void;
+}
+
+export interface RoomSnapshot {
+  roomId: string;
+  seq: number;
+  buffer: { seq: number; blob: string }[];
+  meta: string;
+  closeKey: string;
+  idleTtlSec: number;
+  maxAgeSec: number | undefined;
+  createdAt: number;
+  lastActivity: number;
+}
+
+export interface RelayHandle {
+  url: string;
+  port: number;
+  close(): Promise<void>;
+  snapshot(roomId: string): RoomSnapshot | undefined;
+  disconnectAll(): void;
+  setAccepting(accepting: boolean): void;
+  inject(roomId: string, blob: string): void;
+}
+
+interface Room {
+  state: RoomSnapshot;
+  conns: Set<WebSocket>;
+}
+
+const MAX_PAYLOAD = 96 * 1024;
+
+function defaultLog(event: RelayEvent): void {
+  process.stderr.write(`${JSON.stringify(event)}\n`);
+}
+
+/** Start an in-memory relay. Resolves once it is listening. */
+export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
+  const idleTtlSec = opts.idleTtlSec ?? 28_800;
+  const bufferSize = opts.bufferSize ?? 500;
+  const maxEnvelopeBytes = opts.maxEnvelopeBytes ?? 65_536;
+  const now = opts.now ?? Date.now;
+  const log = opts.log ?? defaultLog;
+  const host = opts.host ?? "127.0.0.1";
+  const rooms = new Map<string, Room>();
+  let accepting = true;
+
+  const wss = new WebSocketServer({
+    port: opts.port,
+    host,
+    maxPayload: MAX_PAYLOAD,
+    verifyClient: () => accepting,
+  });
+  await new Promise<void>((resolve, reject) => {
+    wss.once("listening", resolve);
+    wss.once("error", reject);
+  });
+
+  const send = (ws: WebSocket, frame: RelayFrame) =>
+    ws.send(JSON.stringify(frame));
+
+  const fail = (
+    ws: WebSocket,
+    code: ErrorCode,
+    message: string,
+    end = true,
+  ) => {
+    log({ event: "error", code });
+    send(ws, { t: "error", code, message });
+    if (end) ws.close();
+  };
+
+  const expiresAt = (room: Room) =>
+    room.state.lastActivity + room.state.idleTtlSec * 1000;
+
+  const broadcast = (room: Room, frame: RelayFrame, except?: WebSocket) => {
+    for (const c of room.conns) if (c !== except) send(c, frame);
+  };
+
+  const put = (room: Room, blob: string) => {
+    room.state.seq += 1;
+    room.state.buffer.push({ seq: room.state.seq, blob });
+    if (room.state.buffer.length > bufferSize) room.state.buffer.shift();
+    room.state.lastActivity = now();
+    broadcast(room, { t: "msg", seq: room.state.seq, blob });
+  };
+
+  const join = (ws: WebSocket, hello: HelloFrame): Room | undefined => {
+    let room = rooms.get(hello.room);
+    if (hello.create) {
+      if (room) {
+        fail(ws, "room_exists", "a live room already has this id");
+        return undefined;
+      }
+      const t = now();
+      room = {
+        state: {
+          roomId: hello.room,
+          seq: 0,
+          buffer: [],
+          meta: hello.create.meta,
+          closeKey: hello.create.closeKey,
+          idleTtlSec: Math.min(
+            hello.create.idleTtlSec ?? idleTtlSec,
+            idleTtlSec,
+          ),
+          maxAgeSec: hello.create.maxAgeSec,
+          createdAt: t,
+          lastActivity: t,
+        },
+        conns: new Set(),
+      };
+      rooms.set(hello.room, room);
+      log({ event: "room_created", room: hello.room });
+    } else if (!room) {
+      fail(
+        ws,
+        "room_not_found",
+        "room not found: it expired, was closed, or the relay restarted",
+      );
+      return undefined;
+    }
+    room.state.lastActivity = now();
+    room.conns.add(ws);
+    send(ws, {
+      t: "welcome",
+      seq: room.state.seq,
+      members: room.conns.size,
+      expiresAt: expiresAt(room),
+      nonce: randomBytes(16).toString("base64"),
+      meta: room.state.meta,
+    });
+    if (hello.since !== undefined) {
+      for (const e of room.state.buffer) {
+        if (e.seq > hello.since) send(ws, { t: "msg", ...e });
+      }
+    }
+    broadcast(room, { t: "presence", members: room.conns.size }, ws);
+    log({ event: "conn_open", room: hello.room, members: room.conns.size });
+    return room;
+  };
+
+  wss.on("connection", (ws) => {
+    let room: Room | undefined;
+    let greeted = false;
+    ws.on("error", () => {});
+    ws.on("message", (data, isBinary) => {
+      let frame: ClientFrame;
+      try {
+        if (isBinary) throw new Error("binary frame");
+        frame = ClientFrame.parse(JSON.parse(data.toString()));
+      } catch {
+        fail(ws, "bad_proto", "malformed frame");
+        return;
+      }
+      if (!greeted) {
+        if (frame.t !== "hello") {
+          fail(ws, "bad_proto", "first frame must be hello");
+          return;
+        }
+        greeted = true;
+        room = join(ws, frame);
+        return;
+      }
+      if (frame.t === "hello") {
+        fail(ws, "bad_proto", "hello already received");
+        return;
+      }
+      if (frame.t === "close") {
+        fail(ws, "bad_proto", "close is not supported until protocol M2");
+        return;
+      }
+      if (!room || rooms.get(room.state.roomId) !== room) return;
+      if (Buffer.from(frame.blob, "base64").length > maxEnvelopeBytes) {
+        fail(ws, "too_large", "envelope exceeds 64 KiB", false);
+        return;
+      }
+      put(room, frame.blob);
+    });
+    ws.on("close", () => {
+      if (!room?.conns.delete(ws)) return;
+      broadcast(room, { t: "presence", members: room.conns.size });
+      log({
+        event: "conn_close",
+        room: room.state.roomId,
+        members: room.conns.size,
+      });
+    });
+  });
+
+  const sweep = setInterval(() => {
+    const t = now();
+    for (const [id, room] of rooms) {
+      if (t < expiresAt(room)) continue;
+      rooms.delete(id);
+      for (const c of room.conns) {
+        send(c, { t: "error", code: "room_expired", message: "room expired" });
+        c.close();
+      }
+      room.conns.clear();
+      log({ event: "room_expired", room: id });
+    }
+  }, opts.sweepIntervalMs ?? 60_000);
+  sweep.unref();
+
+  const port = (wss.address() as AddressInfo).port;
+  const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+  return {
+    url: `ws://${urlHost}:${port}`,
+    port,
+    async close() {
+      clearInterval(sweep);
+      for (const c of wss.clients) c.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    },
+    snapshot(roomId) {
+      const room = rooms.get(roomId);
+      return room ? structuredClone(room.state) : undefined;
+    },
+    disconnectAll() {
+      for (const c of wss.clients) c.terminate();
+    },
+    setAccepting(value) {
+      accepting = value;
+    },
+    inject(roomId, blob) {
+      const room = rooms.get(roomId);
+      if (!room) throw new Error(`no room ${roomId}`);
+      put(room, blob);
+    },
+  };
+}

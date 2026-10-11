@@ -1,2 +1,7 @@
-/** Package version; the test keeps it equal to package.json. */
-export const VERSION = "0.0.0";
+export {
+  type RelayEvent,
+  type RelayHandle,
+  type RelayOptions,
+  type RoomSnapshot,
+  startRelay,
+} from "./relay.js";
