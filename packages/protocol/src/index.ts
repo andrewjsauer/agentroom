@@ -1,3 +1,4 @@
+export * from "./crypto.js";
 export * from "./envelope.js";
 export * from "./meta.js";
 export * from "./share-code.js";
