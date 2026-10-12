@@ -76,3 +76,12 @@ test("an empty file gets just the block; values are valid TOML strings", () => {
 test("remove without our table returns the text unchanged", () => {
   expect(removeAgentroomTable(AE3, F)).toBe(AE3);
 });
+
+test("headers followed by a comment are recognised", () => {
+  const ours = `[mcp_servers.agentroom] # ours\ncommand = "x"\n`;
+  expect(setAgentroomTable(ours, F, entry)).toBe(BLOCK);
+  const text = `[mcp_servers.agentroom]\ncommand = "x"\n\n[mcp_servers.other] # mine\ncommand = "y"\n`;
+  expect(removeAgentroomTable(text, F)).toBe(
+    `[mcp_servers.other] # mine\ncommand = "y"\n`,
+  );
+});

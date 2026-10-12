@@ -74,7 +74,9 @@ export function removeAgentroomTable(text: string, file: string): string {
   for (const line of lines) {
     const startsOpen = open;
     open = multilineState(line, open);
-    const header = startsOpen ? null : HEADER.exec(line);
+    const header = startsOpen
+      ? null
+      : HEADER.exec(line.replace(/\r?\n$/, ""));
     if (header) {
       table = keyParts(header[2] ?? "");
       const ours = table[0] === "mcp_servers" && table[1] === "agentroom";
