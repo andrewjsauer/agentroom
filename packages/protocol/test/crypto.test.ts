@@ -155,3 +155,29 @@ test("close keypair is Ed25519 and signs verifiably", async () => {
   const sig = sodium.crypto_sign_detached("room||nonce", sk);
   expect(sodium.crypto_sign_verify_detached(sig, "room||nonce", pk)).toBe(true);
 });
+
+describe("close signatures", () => {
+  const roomId = "b".repeat(64);
+  const nonce = Buffer.alloc(16, 3).toString("base64");
+
+  test("round trip, and false for any mismatch or malformed input", async () => {
+    const { signClose, verifyClose } = await import("../src/index.js");
+    const kp = await generateCloseKeyPair();
+    const other = await generateCloseKeyPair();
+    const sig = await signClose(kp.secretKey, roomId, nonce);
+    expect(await verifyClose(kp.publicKey, sig, roomId, nonce)).toBe(true);
+    expect(await verifyClose(kp.publicKey, sig, "c".repeat(64), nonce)).toBe(
+      false,
+    );
+    const nonce2 = Buffer.alloc(16, 4).toString("base64");
+    expect(await verifyClose(kp.publicKey, sig, roomId, nonce2)).toBe(false);
+    expect(await verifyClose(other.publicKey, sig, roomId, nonce)).toBe(false);
+    expect(
+      await verifyClose(kp.publicKey, sig.slice(0, 20), roomId, nonce),
+    ).toBe(false);
+    expect(await verifyClose(kp.publicKey, "not base64!", roomId, nonce)).toBe(
+      false,
+    );
+    expect(await verifyClose("pk", sig, roomId, nonce)).toBe(false);
+  });
+});

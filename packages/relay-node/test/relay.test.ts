@@ -1,4 +1,11 @@
-import { deriveRoom, type RelayFrame, seal, ulid } from "@agentroom/protocol";
+import {
+  deriveRoom,
+  generateCloseKeyPair,
+  type RelayFrame,
+  seal,
+  signClose,
+  ulid,
+} from "@agentroom/protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import WebSocket from "ws";
 import { type RelayEvent, type RelayHandle, startRelay } from "../src/index.js";
@@ -225,22 +232,10 @@ describe("limits and protocol errors", () => {
     expect(f).toMatchObject({ t: "error", code: "bad_proto" });
     await c.closed;
   });
-
-  test("close gets bad_proto with the M2 message and the room survives", async () => {
-    await start();
-    const { c: a } = await createRoom();
-    a.send({ t: "close", sig: "c2ln" });
-    expect(await a.next()).toEqual({
-      t: "error",
-      code: "bad_proto",
-      message: "close is not supported until protocol M2",
-    });
-    expect(relay.snapshot(ROOM)).toBeDefined();
-  });
 });
 
 describe("expiry", () => {
-  test("idle rooms expire: room_expired pushed, closed, then room_not_found", async () => {
+  test("idle rooms expire: room_expired pushed, closed, tombstoned, then forgotten", async () => {
     await start({ idleTtlSec: 10, sweepIntervalMs: 10 });
     const { c: a } = await createRoom();
     clock += 9_000;
@@ -253,6 +248,13 @@ describe("expiry", () => {
     expect(await a.next()).toMatchObject({ t: "error", code: "room_expired" });
     await a.closed;
     expect(relay.snapshot(ROOM)).toBeUndefined();
+    for (const extra of [{}, { create }]) {
+      const c = await connect();
+      c.send({ t: "hello", room: ROOM, proto: 1, ...extra });
+      expect(await c.next()).toMatchObject({ code: "room_expired" });
+    }
+    clock += 86_400_000;
+    await new Promise((r) => setTimeout(r, 30));
     const c = await connect();
     c.send({ t: "hello", room: ROOM, proto: 1 });
     expect(await c.next()).toMatchObject({ code: "room_not_found" });
@@ -266,15 +268,181 @@ describe("expiry on access", () => {
     clock += 10_000;
     const late = await connect();
     late.send({ t: "hello", room: ROOM, proto: 1 });
-    expect(await late.next()).toMatchObject({ code: "room_not_found" });
+    expect(await late.next()).toMatchObject({ code: "room_expired" });
     expect(await a.next()).toMatchObject({ t: "error", code: "room_expired" });
     expect(relay.snapshot(ROOM)).toBeUndefined();
 
-    const { c: b } = await createRoom();
+    const { c: b } = await createRoom("b".repeat(64));
     clock += 10_000;
     b.send({ t: "put", blob: "AAAA" });
     expect(await b.next()).toMatchObject({ t: "error", code: "room_expired" });
+    expect(relay.snapshot("b".repeat(64))).toBeUndefined();
+  });
+});
+
+async function closeOnly(room = ROOM) {
+  const c = await connect();
+  c.send({ t: "hello", room, proto: 1, closeOnly: true });
+  const welcome = await c.next();
+  if (welcome.t !== "welcome") throw new Error(JSON.stringify(welcome));
+  return { c, nonce: welcome.nonce };
+}
+
+describe("close", () => {
+  test("a valid close from a close-only connection closes everyone and tombstones", async () => {
+    await start();
+    const kp = await generateCloseKeyPair();
+    const { c: a } = await createRoom(ROOM, { closeKey: kp.publicKey });
+    const { c: b } = await joinRoom();
+    a.frames.length = 0;
+    const { c, nonce } = await closeOnly();
+    c.send({ t: "close", sig: await signClose(kp.secretKey, ROOM, nonce) });
+    for (const x of [a, b, c]) {
+      let f = await x.next();
+      while (f.t !== "closed") f = await x.next();
+      await x.closed;
+    }
     expect(relay.snapshot(ROOM)).toBeUndefined();
+    expect(events).toContainEqual({ event: "room_closed", room: ROOM });
+    for (const extra of [{}, { create }]) {
+      const d = await connect();
+      d.send({ t: "hello", room: ROOM, proto: 1, ...extra });
+      expect(await d.next()).toMatchObject({ code: "room_expired" });
+    }
+  });
+
+  test("a non-creator key, a replayed nonce, or a malformed sig gets bad_signature", async () => {
+    await start();
+    const kp = await generateCloseKeyPair();
+    const other = await generateCloseKeyPair();
+    const { c: a } = await createRoom(ROOM, { closeKey: kp.publicKey });
+    const first = await closeOnly();
+    const replayed = await signClose(kp.secretKey, ROOM, first.nonce);
+    const sigs = [
+      async (n: string) => signClose(other.secretKey, ROOM, n),
+      async () => replayed,
+      async () => "",
+      async () => "not base64!",
+    ];
+    for (const make of sigs) {
+      const { c, nonce } = await closeOnly();
+      c.send({ t: "close", sig: await make(nonce) });
+      expect(await c.next()).toMatchObject({ code: "bad_signature" });
+      await c.closed;
+    }
+    expect(relay.snapshot(ROOM)).toBeDefined();
+    expect(a.frames.some((f) => f.t === "closed")).toBe(false);
+  });
+
+  test("close-only is admitted at the cap, is not counted, gets no msgs, and may only close", async () => {
+    await start({ maxMembers: 1 });
+    const { c: a } = await createRoom();
+    const { c } = await closeOnly();
+    a.send({ t: "put", blob: "AAAA" });
+    await a.next();
+    expect(a.frames).toEqual([]);
+    expect(c.frames).toEqual([]);
+    c.send({ t: "put", blob: "AAAA" });
+    expect(await c.next()).toMatchObject({ code: "bad_proto" });
+    await c.closed;
+  });
+
+  test("an idle close-only connection is closed after the grace period", async () => {
+    await start({ closeGraceMs: 20 });
+    await createRoom();
+    const { c } = await closeOnly();
+    await c.closed;
+  });
+
+  test.each([
+    ["create", { create }],
+    ["since", { since: 0 }],
+  ])("closeOnly with %s gets bad_proto", async (_n, extra) => {
+    await start();
+    await createRoom();
+    const c = await connect();
+    c.send({ t: "hello", room: ROOM, proto: 1, closeOnly: true, ...extra });
+    expect(await c.next()).toMatchObject({ code: "bad_proto" });
+  });
+});
+
+describe("max age, rate limit, cap", () => {
+  test("maxAgeSec is capped at the relay default and defaults to it", async () => {
+    await start({ maxAgeSec: 100 });
+    await createRoom(ROOM, { maxAgeSec: 1000 });
+    expect(relay.snapshot(ROOM)?.maxAgeSec).toBe(100);
+    await createRoom("b".repeat(64));
+    expect(relay.snapshot("b".repeat(64))?.maxAgeSec).toBe(100);
+  });
+
+  test("welcome.expiresAt is the earlier of idle and max-age deadlines", async () => {
+    await start({ idleTtlSec: 100 });
+    const { welcome } = await createRoom(ROOM, { maxAgeSec: 50 });
+    expect(welcome).toMatchObject({ expiresAt: clock + 50_000 });
+    const { welcome: w2 } = await createRoom("b".repeat(64), {
+      maxAgeSec: 500,
+    });
+    expect(w2).toMatchObject({ expiresAt: clock + 100_000 });
+  });
+
+  test("an active room still expires at max age", async () => {
+    await start({
+      idleTtlSec: 100,
+      sweepIntervalMs: 10,
+      rateLimit: { burst: 100, perSec: 100 },
+    });
+    const { c: a } = await createRoom(ROOM, { maxAgeSec: 60 });
+    const { c: b } = await joinRoom();
+    for (let i = 0; i < 6; i++) {
+      clock += 9_000;
+      a.send({ t: "put", blob: "AAAA" });
+      let f = await a.next();
+      while (f.t !== "msg") f = await a.next();
+    }
+    expect(relay.snapshot(ROOM)).toBeDefined();
+    clock += 7_000;
+    for (const x of [a, b]) {
+      let f = await x.next();
+      while (!(f.t === "error" && f.code === "room_expired"))
+        f = await x.next();
+      await x.closed;
+    }
+    expect(relay.snapshot(ROOM)).toBeUndefined();
+  });
+
+  test("rate limit refuses without closing, is per connection, and refills", async () => {
+    await start({ rateLimit: { burst: 3, perSec: 1 } });
+    const { c: a } = await createRoom();
+    const { c: b } = await joinRoom();
+    await a.next(); // presence
+    for (let i = 0; i < 3; i++) {
+      a.send({ t: "put", blob: "AAAA" });
+      await a.next();
+      await b.next();
+    }
+    a.send({ t: "put", blob: "BBBB" });
+    expect(await a.next()).toMatchObject({ code: "rate_limited" });
+    expect(relay.snapshot(ROOM)?.seq).toBe(3);
+    b.send({ t: "put", blob: "CCCC" });
+    expect(await a.next()).toMatchObject({ t: "msg", seq: 4 });
+    clock += 1_000;
+    a.send({ t: "put", blob: "DDDD" });
+    expect(await a.next()).toMatchObject({ t: "msg", seq: 5 });
+  });
+
+  test("a join over maxMembers gets room_full; after a leave it succeeds", async () => {
+    await start({ maxMembers: 2 });
+    await createRoom();
+    const { c: b } = await joinRoom();
+    const c = await connect();
+    c.send({ t: "hello", room: ROOM, proto: 1 });
+    expect(await c.next()).toMatchObject({ code: "room_full" });
+    await c.closed;
+    b.ws.close();
+    await b.closed;
+    await new Promise((r) => setTimeout(r, 20));
+    const { welcome } = await joinRoom();
+    expect(welcome).toMatchObject({ t: "welcome" });
   });
 });
 
@@ -306,7 +474,15 @@ test("invariant 1: stored state and logs hold no plaintext", async () => {
       marker,
     );
   }
+  const kp = await generateCloseKeyPair();
+  const { roomId: r2 } = deriveRoom(new Uint8Array(32).fill(8));
+  await createRoom(r2, { closeKey: kp.publicKey });
+  const { c, nonce } = await closeOnly(r2);
+  const sig = await signClose(kp.secretKey, r2, nonce);
+  c.send({ t: "close", sig });
+  await c.closed;
   const logged = JSON.stringify(events);
+  expect(logged).not.toContain(sig);
   expect(logged).not.toContain(marker);
   expect(logged).not.toContain(blob);
   expect(logged).not.toContain("META");

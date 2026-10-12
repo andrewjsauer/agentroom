@@ -5,6 +5,7 @@ import {
   type ErrorCode,
   type HelloFrame,
   type RelayFrame,
+  verifyClose,
 } from "@agentroom/protocol";
 import { type WebSocket, WebSocketServer } from "ws";
 
@@ -12,6 +13,7 @@ import { type WebSocket, WebSocketServer } from "ws";
 export type RelayEvent =
   | { event: "room_created"; room: string }
   | { event: "room_expired"; room: string }
+  | { event: "room_closed"; room: string }
   | { event: "conn_open"; room: string; members: number }
   | { event: "conn_close"; room: string; members: number }
   | { event: "error"; code: ErrorCode };
@@ -23,10 +25,14 @@ export interface RelayOptions {
   bufferSize?: number;
   maxEnvelopeBytes?: number;
   sweepIntervalMs?: number;
-  /** Stored only; enforced in M2. */
+  /** Default and ceiling for a room's max age (default 24 h). */
   maxAgeSec?: number;
-  /** Stored only; enforced in M2. */
+  /** Connections per room, close-only connections excepted (default 8). */
   maxMembers?: number;
+  /** Token bucket on `put`, per connection (default burst 20, refill 2/s). */
+  rateLimit?: { burst: number; perSec: number };
+  /** How long a close-only connection may wait before sending `close` (default 10 s). */
+  closeGraceMs?: number;
   now?: () => number;
   log?: (event: RelayEvent) => void;
 }
@@ -38,7 +44,7 @@ export interface RoomSnapshot {
   meta: string;
   closeKey: string;
   idleTtlSec: number;
-  maxAgeSec: number | undefined;
+  maxAgeSec: number;
   createdAt: number;
   lastActivity: number;
 }
@@ -56,6 +62,15 @@ export interface RelayHandle {
 interface Room {
   state: RoomSnapshot;
   conns: Set<WebSocket>;
+  closers: Set<WebSocket>;
+}
+
+interface Conn {
+  room?: Room;
+  nonce?: string;
+  closeOnly: boolean;
+  tokens: number;
+  refilledAt: number;
 }
 
 const MAX_PAYLOAD = 96 * 1024;
@@ -72,7 +87,12 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const now = opts.now ?? Date.now;
   const log = opts.log ?? defaultLog;
   const host = opts.host ?? "127.0.0.1";
+  const maxAgeSec = opts.maxAgeSec ?? 86_400;
+  const maxMembers = opts.maxMembers ?? 8;
+  const rateLimit = opts.rateLimit ?? { burst: 20, perSec: 2 };
   const rooms = new Map<string, Room>();
+  /** Closed or expired room ids, remembered until createdAt + maxAge (KTD7). */
+  const tombstones = new Map<string, number>();
   let accepting = true;
 
   const wss = new WebSocketServer({
@@ -101,15 +121,29 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
 
   const expiresAt = (room: Room) =>
-    room.state.lastActivity + room.state.idleTtlSec * 1000;
+    Math.min(
+      room.state.lastActivity + room.state.idleTtlSec * 1000,
+      room.state.createdAt + room.state.maxAgeSec * 1000,
+    );
 
-  const expire = (id: string, room: Room) => {
+  /** Drop a room, send `frame` to every connection, close them, and tombstone the id. */
+  const drop = (id: string, room: Room, frame: RelayFrame) => {
     rooms.delete(id);
-    for (const c of room.conns) {
-      send(c, { t: "error", code: "room_expired", message: "room expired" });
+    tombstones.set(id, room.state.createdAt + room.state.maxAgeSec * 1000);
+    for (const c of [...room.conns, ...room.closers]) {
+      send(c, frame);
       c.close();
     }
     room.conns.clear();
+    room.closers.clear();
+  };
+
+  const expire = (id: string, room: Room) => {
+    drop(id, room, {
+      t: "error",
+      code: "room_expired",
+      message: "room expired",
+    });
     log({ event: "room_expired", room: id });
   };
 
@@ -135,12 +169,24 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     broadcast(room, { t: "msg", seq: room.state.seq, blob });
   };
 
-  const join = (ws: WebSocket, hello: HelloFrame): Room | undefined => {
+  const join = (ws: WebSocket, conn: Conn, hello: HelloFrame): void => {
+    if (hello.closeOnly && (hello.create || hello.since !== undefined)) {
+      fail(
+        ws,
+        "bad_proto",
+        "closeOnly cannot be combined with create or since",
+      );
+      return;
+    }
     let room = liveRoom(hello.room);
+    if (!room && tombstones.has(hello.room)) {
+      fail(ws, "room_expired", "room was closed or expired");
+      return;
+    }
     if (hello.create) {
       if (room) {
         fail(ws, "room_exists", "a live room already has this id");
-        return undefined;
+        return;
       }
       const t = now();
       room = {
@@ -154,11 +200,12 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
             hello.create.idleTtlSec ?? idleTtlSec,
             idleTtlSec,
           ),
-          maxAgeSec: hello.create.maxAgeSec,
+          maxAgeSec: Math.min(hello.create.maxAgeSec ?? maxAgeSec, maxAgeSec),
           createdAt: t,
           lastActivity: t,
         },
         conns: new Set(),
+        closers: new Set(),
       };
       rooms.set(hello.room, room);
       log({ event: "room_created", room: hello.room });
@@ -168,7 +215,29 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         "room_not_found",
         "room not found: it expired, was closed, or the relay restarted",
       );
-      return undefined;
+      return;
+    }
+    const nonce = randomBytes(16).toString("base64");
+    conn.room = room;
+    conn.nonce = nonce;
+    if (hello.closeOnly) {
+      conn.closeOnly = true;
+      room.closers.add(ws);
+      send(ws, {
+        t: "welcome",
+        seq: room.state.seq,
+        members: room.conns.size,
+        expiresAt: expiresAt(room),
+        nonce,
+        meta: room.state.meta,
+      });
+      setTimeout(() => ws.close(), opts.closeGraceMs ?? 10_000).unref();
+      return;
+    }
+    if (room.conns.size >= maxMembers) {
+      conn.room = undefined;
+      fail(ws, "room_full", "room is at its connection cap");
+      return;
     }
     room.state.lastActivity = now();
     room.conns.add(ws);
@@ -177,7 +246,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       seq: room.state.seq,
       members: room.conns.size,
       expiresAt: expiresAt(room),
-      nonce: randomBytes(16).toString("base64"),
+      nonce,
       meta: room.state.meta,
     });
     if (hello.since !== undefined) {
@@ -187,11 +256,32 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     }
     broadcast(room, { t: "presence", members: room.conns.size }, ws);
     log({ event: "conn_open", room: hello.room, members: room.conns.size });
-    return room;
+  };
+
+  const close = async (ws: WebSocket, conn: Conn, sig: string) => {
+    const room = conn.room;
+    if (!room || liveRoom(room.state.roomId) !== room) return;
+    const ok = await verifyClose(
+      room.state.closeKey,
+      sig,
+      room.state.roomId,
+      conn.nonce as string,
+    );
+    if (!ok) {
+      fail(ws, "bad_signature", "close signature did not verify");
+      return;
+    }
+    if (rooms.get(room.state.roomId) !== room) return;
+    drop(room.state.roomId, room, { t: "closed" });
+    log({ event: "room_closed", room: room.state.roomId });
   };
 
   wss.on("connection", (ws) => {
-    let room: Room | undefined;
+    const conn: Conn = {
+      closeOnly: false,
+      tokens: rateLimit.burst,
+      refilledAt: now(),
+    };
     let greeted = false;
     ws.on("error", () => {});
     ws.on("message", (data, isBinary) => {
@@ -209,7 +299,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           return;
         }
         greeted = true;
-        room = join(ws, frame);
+        join(ws, conn, frame);
         return;
       }
       if (frame.t === "hello") {
@@ -217,10 +307,26 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         return;
       }
       if (frame.t === "close") {
-        fail(ws, "bad_proto", "close is not supported until protocol M2");
+        void close(ws, conn, frame.sig);
         return;
       }
+      if (conn.closeOnly) {
+        fail(ws, "bad_proto", "a close-only connection may send only close");
+        return;
+      }
+      const room = conn.room;
       if (!room || liveRoom(room.state.roomId) !== room) return;
+      const t = now();
+      conn.tokens = Math.min(
+        rateLimit.burst,
+        conn.tokens + ((t - conn.refilledAt) / 1000) * rateLimit.perSec,
+      );
+      conn.refilledAt = t;
+      if (conn.tokens < 1) {
+        fail(ws, "rate_limited", "too many messages; slow down", false);
+        return;
+      }
+      conn.tokens -= 1;
       if (Buffer.from(frame.blob, "base64").length > maxEnvelopeBytes) {
         fail(ws, "too_large", "envelope exceeds 64 KiB", false);
         return;
@@ -228,6 +334,8 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       put(room, frame.blob);
     });
     ws.on("close", () => {
+      const room = conn.room;
+      room?.closers.delete(ws);
       if (!room?.conns.delete(ws)) return;
       broadcast(room, { t: "presence", members: room.conns.size });
       log({
@@ -242,6 +350,9 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     const t = now();
     for (const [id, room] of rooms) {
       if (t >= expiresAt(room)) expire(id, room);
+    }
+    for (const [id, until] of tombstones) {
+      if (t >= until) tombstones.delete(id);
     }
   }, opts.sweepIntervalMs ?? 60_000);
   sweep.unref();

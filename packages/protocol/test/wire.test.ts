@@ -76,3 +76,12 @@ describe("RelayFrame", () => {
     ).toBe(false);
   });
 });
+
+test("hello accepts closeOnly: true and rejects other values", async () => {
+  const { HelloFrame } = await import("../src/index.js");
+  const base = { t: "hello", room: "a".repeat(64), proto: 1 };
+  expect(HelloFrame.parse({ ...base, closeOnly: true }).closeOnly).toBe(true);
+  expect(HelloFrame.safeParse({ ...base, closeOnly: false }).success).toBe(
+    false,
+  );
+});

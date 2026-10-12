@@ -12,6 +12,8 @@ export const HelloFrame = z.object({
   room: RoomId,
   proto: z.literal(PROTOCOL_VERSION),
   since: Seq.optional(),
+  /** Admitted past the connection cap; may send only `close` (KTD8). */
+  closeOnly: z.literal(true).optional(),
   create: z
     .object({
       closeKey: z.string(),

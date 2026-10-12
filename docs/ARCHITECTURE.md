@@ -45,7 +45,7 @@ Responsibilities, and nothing else:
 - Bounded buffer of the last 500 envelopes per room (in memory for `relay-node`, Durable Object storage for `relay-cf`), so late joiners and reconnects catch up.
 - Each envelope gets a relay-assigned monotonically increasing sequence number; clients resume with `since=<seq>`.
 - Idle TTL (default 8 hours) and max age (default 24 hours). Expired rooms are dropped from memory.
-- Limits: max envelope size (64 KB ciphertext), per-connection rate limit, max members per room (default 8).
+- Limits: max envelope size (64 KB ciphertext); a per-connection token bucket on `put` (burst 20, refill 2 per second; over the limit the relay answers `error{rate_limited}`, drops the frame and keeps the connection open); max connections per room (default 8, one-shot CLI connections included; a `hello` over the cap gets `room_full` and is closed). A room's max age is `min(create.maxAgeSec ?? 24 h, 24 h)` and `welcome.expiresAt` is the earlier of the idle and max-age deadlines; on expiry each connection gets `error{room_expired}` before it is closed.
 - Presence: broadcasts connection counts only. Display names travel inside encrypted `presence` envelopes, and clients count members by distinct member name from those, since one person may hold several connections (MCP server, `watch`, a one-shot CLI command). The member cap counts connections.
 - Room settings: the creating `hello` carries the idle and max-age TTLs in plaintext (capped at the relay defaults) and an opaque encrypted `meta` blob (room name, `maxAgentChain`). The relay stores both outside the ring buffer and returns `meta` in every `welcome`, so late joiners get the settings even after the buffer has rolled over.
 
@@ -53,10 +53,10 @@ Relay wire protocol (JSON over WebSocket, plaintext framing around ciphertext):
 
 ```ts
 // client -> relay
-{ t: "hello", room: string, proto: 1, since?: number,
+{ t: "hello", room: string, proto: 1, since?: number, closeOnly?: true,
   create?: { closeKey: string /* base64 Ed25519 public key */, idleTtlSec?: number, maxAgeSec?: number, meta: string /* base64 ciphertext */ } }
 { t: "put", blob: string /* base64 ciphertext */ }
-{ t: "close", sig: string /* base64 Ed25519 signature over room_id || nonce */ }
+{ t: "close", sig: string /* base64 Ed25519 signature over utf8(hex room_id) || raw bytes of base64-decoded welcome.nonce */ }
 // relay -> client
 { t: "welcome", seq: number, members: number, expiresAt: number, nonce: string, meta: string }
 { t: "msg", seq: number, blob: string }
@@ -67,7 +67,9 @@ Relay wire protocol (JSON over WebSocket, plaintext framing around ciphertext):
 
 Creating and joining are distinct. Only `up` sends `hello` with `create`; the relay creates the room, pins `closeKey`, the TTLs and `meta`, and answers `room_exists` if the id is already live. A `hello` without `create` for an unknown id gets `room_not_found`, which clients treat like `room_expired` (stop reconnecting, tell the user to run `up` again). This is what makes `down` and expiry final: a reconnecting member cannot silently recreate the room. The relay remembers closed and expired ids until their original max age has passed and rejects `create` for them.
 
-`close` is accepted only when `sig` verifies under the pinned `closeKey` over `room_id || nonce`, where `nonce` is issued per connection in `welcome`, so a captured `close` cannot be replayed. The relay broadcasts `closed` and deletes the room. Verification lands in milestone 2; the `create` shape is in milestone 1 so the protocol does not change under the deployed relay.
+`close` is accepted only when `sig` verifies under the pinned `closeKey` over `room_id || nonce`, where `nonce` is issued per connection in `welcome`, so a captured `close` cannot be replayed. The relay sends `closed` to every connection, closes them, deletes the room, and tombstones the id until `createdAt + maxAge`; any `hello` for a tombstoned id, with or without `create`, gets `room_expired` ("room was closed or expired"), so `room_not_found` keeps meaning "never existed or the relay restarted". A wrong key, replayed nonce or malformed signature gets `bad_signature` and the room survives.
+
+A `hello` may carry `closeOnly: true` (not combined with `create` or `since`). Such a connection skips the connection cap, gets a `welcome` with a nonce, is not counted or broadcast to, and may send only `close`; any other frame gets `bad_proto`, and the relay closes it after 10 s without a `close`. This lets a creator close a room whose cap is full.
 
 Wire behavior fixed in milestone 1 (both relays must match it):
 
@@ -77,7 +79,6 @@ Wire behavior fixed in milestone 1 (both relays must match it):
 - `presence{members}` is broadcast to the other connections on every connect and disconnect.
 - The 64 KiB envelope limit counts decoded blob bytes. The WebSocket frame limit is 96 KiB, which also bounds `hello` and `meta`.
 - Idle means no `put` and no `hello`. An open but silent connection does not keep a room alive. On expiry the relay sends `error{room_expired}` to each open connection before closing it and dropping the room.
-- Until milestone 2, `close` is rejected with `error{bad_proto, "close is not supported until protocol M2"}` rather than accepted unsigned, so no member can delete a room by knowing its id.
 
 Two implementations share the same protocol and a shared conformance test suite:
 
@@ -98,7 +99,7 @@ HKDF comes from Node's `crypto.hkdfSync` (`libsodium-wrappers` does not expose H
 - Envelope encryption: XChaCha20-Poly1305 (libsodium `crypto_aead_xchacha20poly1305_ietf`) with a random 24-byte nonce per message. Ciphertext blob = `nonce || ciphertext`.
 - Associated data: `room_id`, binding ciphertext to the room.
 - A 256-bit random secret cannot be brute-forced, so holding `room_id` gives the relay nothing.
-- Creator-only close: `up` generates a local-only Ed25519 keypair (libsodium `crypto_sign`), keeps the secret key in the room file, and sends the public key in plaintext in the creating `hello`. The relay pins it and verifies `close` against it (milestone 2). The key identifies the creating machine, not a person.
+- Creator-only close: `up` generates a local-only Ed25519 keypair (libsodium `crypto_sign`), keeps the secret key in the room file, and sends the public key in plaintext in the creating `hello`. The relay pins it and verifies `close` against it. The key identifies the creating machine, not a person.
 - Room `meta` (name, `maxAgentChain`) is encrypted with the room key like any envelope, so the relay stores it without reading it.
 - Threat model, v0: protects against a curious or compromised relay and network observers reading or forging messages. Does not protect against a malicious room member, who can read everything by design. Leakage of the share code (pasted in Slack) is the user's responsibility; document it.
 - The relay can still replay, reorder, delay, or drop envelopes. Clients drop any envelope id they have already seen and order by relay seq; a relay that drops messages is not detected in v0.
