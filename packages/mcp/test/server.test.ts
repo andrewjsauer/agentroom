@@ -36,9 +36,12 @@ beforeEach(async () => {
   alice = startMember(homeA, relay, room, "alice");
   bob = startMember(homeB, relay, room, "bob", "gemini");
   await until(
-    () => alice.status().connections === 2 && bob.status().connections === 2,
+    () =>
+      alice.status().connections === 2 &&
+      bob.status().connections === 2 &&
+      relay.snapshot(room.roomId)?.seq === 2,
     5000,
-    "both live",
+    "both live with presence stored",
   );
   a = await connectClient(alice);
   b = await connectClient(bob);
