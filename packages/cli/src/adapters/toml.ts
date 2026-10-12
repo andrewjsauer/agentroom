@@ -44,13 +44,22 @@ function multilineState(
       state = undefined;
       continue;
     }
-    const hash = line.indexOf("#", i);
-    const dq = line.indexOf('"""', i);
-    const sq = line.indexOf("'''", i);
-    const next = [dq, sq].filter((n) => n >= 0).sort((a, b) => a - b)[0];
-    if (next === undefined || (hash >= 0 && hash < next)) return undefined;
-    state = line.slice(next, next + 3);
-    i = next + 3;
+    const ch = line[i];
+    if (ch === "#") return undefined;
+    if (line.startsWith('"""', i) || line.startsWith("'''", i)) {
+      state = line.slice(i, i + 3);
+      i += 3;
+    } else if (ch === '"') {
+      // A one-line basic string: skip to its closing quote, past escapes.
+      i++;
+      while (i < line.length && line[i] !== '"') i += line[i] === "\\" ? 2 : 1;
+      i++;
+    } else if (ch === "'") {
+      const end = line.indexOf("'", i + 1);
+      i = end < 0 ? line.length : end + 1;
+    } else {
+      i++;
+    }
   }
   return state;
 }

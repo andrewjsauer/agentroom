@@ -100,3 +100,9 @@ test("forms that do not define agentroom are not refused", () => {
   const array = `[[mcp_servers.other]] # not agentroom\ncommand = "o"\n`;
   expect(removeAgentroomTable(array, F)).toBe(array);
 });
+
+test("triple quotes inside a one-line string do not open a multi-line string", () => {
+  const head = `x = "'''"\ny = 'a"""b'\n`;
+  const text = `${head}\n[mcp_servers.agentroom]\ncommand = "old"\n`;
+  expect(setAgentroomTable(text, F, entry)).toBe(`${head}\n${BLOCK}`);
+});
