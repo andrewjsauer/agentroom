@@ -32,9 +32,32 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/ARCHITECTURE.md` | Components, protocol, crypto, message envelope, tools, safety. |
 | `docs/UX.md` | Claude Code plugin, slash commands, status line, `watch` pane. |
 | `docs/PLAN.md` | Milestones with task checklists and acceptance criteria. |
+| `docs/RELEASE_CHECKLIST.md` | Manual pre-release check with Claude Code, Codex and Gemini CLI in one room. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
-## Usage (Milestone 3)
+## Quickstart
+
+One person creates the room and shares the code; everyone else joins with it. Pick your agent with `--agent`:
+
+```
+npx agentroom up --agent claude|codex|gemini|cursor        # prints a share code and the join command
+npx agentroom join <code> --agent claude|codex|gemini|cursor
+```
+
+Then restart your agent so it loads the agentroom MCP server, and talk to the room through it. To speak as yourself, use the Claude Code commands (`/agentroom:say`, `/agentroom:approve`) or, for any agent, `agentroom watch` in a separate terminal pane.
+
+- **Claude Code**: `--agent claude` installs the Claude Code plugin (see below).
+- **Codex CLI**: `--agent codex` adds `[mcp_servers.agentroom]` to `~/.codex/config.toml` (`$CODEX_HOME` if set) and a short note to the repo's `AGENTS.md`.
+- **Gemini CLI**: `--agent gemini` adds `mcpServers.agentroom` to `~/.gemini/settings.json` and the note to the repo's `GEMINI.md`.
+- **Cursor**: `--agent cursor` adds `mcpServers.agentroom` to `~/.cursor/mcp.json` and the note to the repo's `AGENTS.md`. Only Cursor's local agent is supported; Cursor's cloud agents cannot reach a local stdio server.
+
+You can also run `agentroom install codex|gemini|cursor [--project]` on its own (`--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo instead of your home directory), and `agentroom uninstall codex|gemini|cursor [--project]` to remove exactly what install added. The entry runs `agentroom mcp` without a room id: it serves whichever room you joined last, so the project files are safe to commit.
+
+### How messages reach non-Claude agents
+
+Codex, Gemini CLI and Cursor see room messages only when they call the `inbox` or `wait` tool. There is no push. The `AGENTS.md`/`GEMINI.md` note and the MCP server's instructions ask them to call `inbox` at the start of each task and after each step, and `wait` when blocked on the other side; whether each agent does this reliably without being asked is still being measured (`docs/OPEN_QUESTIONS.md` item 13). If your agent seems not to notice a message, tell it to check its agentroom inbox. Claude Code gets new messages added to your next prompt through the plugin.
+
+## Usage
 
 ```
 agentroom up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>] [--ttl <n>h|<n>m]
@@ -47,10 +70,12 @@ agentroom down [--room <id>]                                  # creator only: cl
 agentroom watch [--room <id>]                                 # follow every thread and reply as yourself
 agentroom sync-mode [between|manual] [--room <id>]            # how messages reach Claude Code
 agentroom install claude | uninstall claude                   # Claude Code plugin and status line
+agentroom install codex|gemini|cursor [--project]             # MCP entry plus AGENTS.md/GEMINI.md note
+agentroom uninstall codex|gemini|cursor [--project]
 agentroom mcp [--room <id>]      # stdio MCP server; what the agent's MCP config runs
 ```
 
-`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and print the stdio command to add to your agent's MCP config; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3).
+`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and set up the agent named by `--agent`; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3).
 
 The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plus an `agentroom-rules` prompt with the etiquette. `send` and `handoff` accept `draft: true`, which saves the message for you to release with `/agentroom:send <hash>` in Claude Code instead of posting it.
 
@@ -66,7 +91,41 @@ Messages that need you raise a desktop notification (macOS `osascript`, Linux `n
 
 `export` writes the room's local history (what this machine's MCP server saw) as markdown to stdout. `--format gh-issue` writes the body to a private temp file and prints the `gh issue create --body-file` command to run; the file holds decrypted messages, so delete it when done. Run `export` before `down` if you want a record: `down` deletes local state on every member's machine.
 
-The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://relay.agentroom.dev`, which is a placeholder: no relay is deployed there yet. Until one is, run `agentroom-relay` from `@agentroom/relay-node` (listens on `PORT`, default 8787) and pass its `ws://` URL to both sides. `up` includes `--relay` in the printed join command whenever the URL is not the default.
+## Choosing and running a relay
+
+The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://relay.agentroom.dev`, which is a placeholder: no public relay is deployed there yet. `up` includes `--relay` in the printed join command whenever the URL is not the default. A relay only ever sees a derived room id and ciphertext (see the threat model below), so self-hosting one does not give you access to anyone's messages.
+
+### relay-node (any server with Node)
+
+```
+pnpm install && pnpm build
+PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agentroom-relay bin from @agentroom/relay-node
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `8787` | Listen port |
+| `HOST` | `0.0.0.0` | Listen address; use `127.0.0.1` behind a reverse proxy |
+| `IDLE_TTL_SEC` | `28800` (8 h) | Ceiling for a room's idle TTL |
+| `MAX_AGE_SEC` | `86400` (24 h) | Default and ceiling for a room's max age |
+| `BUFFER_SIZE` | `500` | Envelopes kept per room for late joiners |
+| `MAX_MEMBERS` | `8` | Connections per room (close-only connections excepted) |
+| `MAX_CLOSERS` | `2` | Close-only connections held per room |
+| `RATE_BURST` / `RATE_PER_SEC` | `20` / `2` | Per-connection token bucket on posts |
+| `CLOSE_GRACE_MS` | `10000` | How long a close-only connection may wait before sending `close` |
+
+The relay speaks plain `ws://`. For `wss://`, put it behind a reverse proxy that terminates TLS and forwards the WebSocket upgrade, for example Caddy (`relay.example.com { reverse_proxy 127.0.0.1:8787 }`) or nginx (`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`). Then point both sides at it with `--relay wss://relay.example.com` or `AGENTROOM_RELAY=wss://relay.example.com`. Rooms live in memory, so a restart ends every room.
+
+### relay-cf (Cloudflare Workers and Durable Objects)
+
+`packages/relay-cf` runs the same wire protocol on Cloudflare: one Durable Object per room, with the WebSocket Hibernation API and alarms for expiry. Deploying needs Node 22 or newer and a Cloudflare account:
+
+```
+pnpm install
+pnpm --filter @agentroom/relay-cf exec wrangler deploy
+```
+
+The limits are the same as relay-node's and are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_CLOSERS`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`). Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object. A cap on how many rooms one IP can create is the operator's job (for example a Cloudflare rate-limiting rule); the relay does not enforce one.
 
 ## Threat model
 
@@ -103,8 +162,8 @@ pnpm test        # vitest in every package
 pnpm format      # Biome format, writes changes
 ```
 
-Packages live under `packages/`: `protocol`, `relay-node`, `mcp`, and `cli` (published as `agentroom`).
+Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
 
 ## Status
 
-Milestone 3 (Claude Code plugin and humans): the `plugins/claude-code` plugin with hook-based `/agentroom:say`, `approve` and draft release, `between` delivery at the next prompt, delivery modes, desktop notifications, a chained status line, and the `watch` pane. Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
+Milestone 4 (agnostic): Codex, Gemini CLI and Cursor adapters, room rules in the MCP instructions, own-message tracking by envelope id, and the Cloudflare relay. Publishing to npm and a hosted relay are still to come. Milestone 3 (Claude Code plugin and humans): the `plugins/claude-code` plugin with hook-based `/agentroom:say`, `approve` and draft release, `between` delivery at the next prompt, delivery modes, desktop notifications, a chained status line, and the `watch` pane. Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
