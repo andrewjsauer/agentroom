@@ -174,6 +174,14 @@ test("join without a code refuses off a terminal and prompts on one", async () =
   expect(readCurrent(hB)).toBeDefined();
 });
 
+test("join ends with a usage error when the prompt gets end of input", async () => {
+  const tty = makeCtx(home(), { isTTY: true });
+  const run = main(["join", "--relay", relay.url], tty.ctx);
+  tty.stdin.end();
+  expect(await run).toBe(2);
+  expect(tty.err()).toContain("share code must start with ar1_");
+});
+
 test("up and join reject --agent human", async () => {
   const h = home();
   const u = makeCtx(h);

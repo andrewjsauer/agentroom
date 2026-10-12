@@ -21,9 +21,11 @@ import { defaultMember, hoursUntil } from "./up.js";
 function promptForCode(ctx: CliContext): Promise<string> {
   const rl = createInterface({ input: ctx.stdin, output: ctx.stdout });
   return new Promise((resolve) => {
+    // End of input (Ctrl-D) closes without an answer; resolve empty so parsing reports it.
+    rl.once("close", () => resolve(""));
     rl.question("Share code: ", (answer) => {
-      rl.close();
       resolve(answer.trim());
+      rl.close();
     });
   });
 }
