@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readRoomFile, readStatus } from "@agentroom/mcp";
+import { NO_ROOM_TEXT, readRoomFile, readStatus } from "@agentroom/mcp";
 import {
   deriveRoom,
   type Envelope,
@@ -345,29 +345,21 @@ test("the mcp child exits shortly after its stdin closes", async () => {
   expect(code).not.toBe("timeout");
 }, 20_000);
 
-test("mcp with a missing room exits non-zero and writes nothing to stdout", async () => {
+test("mcp with a missing room serves the no-room stub", async () => {
   const home = mkdtempSync(join(tmpdir(), "agentroom-conf-none-"));
+  const transports: StdioClientTransport[] = [];
+  let client: Client | undefined;
   try {
-    const child = spawn(
-      process.execPath,
-      [BIN, "mcp", "--room", "f".repeat(64)],
-      { env: envFor(home), stdio: ["pipe", "pipe", "pipe"] },
+    client = await connectMcp(
+      { ...baseEnv(home, "ws://127.0.0.1:1"), AGENTROOM_NOTIFY: "off" },
+      "f".repeat(64),
+      transports,
     );
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (d) => {
-      out += String(d);
-    });
-    child.stderr.on("data", (d) => {
-      err += String(d);
-    });
-    const exitCode = await new Promise<number | null>((r) =>
-      child.once("exit", r),
-    );
-    expect(exitCode).not.toBe(0);
-    expect(out).toBe("");
-    expect(err).toContain("agentroom:");
+    const r = await call(client, "inbox");
+    expect(r.isError).toBe(false);
+    expect(r.text).toBe(NO_ROOM_TEXT);
   } finally {
+    await closeAll([client], transports);
     rmSync(home, { recursive: true, force: true });
   }
 });
