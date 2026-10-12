@@ -122,6 +122,21 @@ describe("secret scanner", () => {
     ).toBeUndefined();
   });
 
+  test("a separated base64url-style token still blocks the generic rule", () => {
+    expect(ruleFor(j("secret_token: ", "Xk9fQ2_mZ7pL4w-Rt8Yb3NcV"))).toBe(
+      "generic-assignment",
+    );
+  });
+
+  test("a key in the to field is blocked", () => {
+    try {
+      assertNoSecrets({ ...envOf("hi"), to: fakeAwsId });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as SecretFoundError).field).toBe("to");
+    }
+  });
+
   test("a key in refs[1].path is reported with that field", () => {
     try {
       assertNoSecrets(

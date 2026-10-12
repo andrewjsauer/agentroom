@@ -104,7 +104,12 @@ function genericMatch(text: string): boolean {
     const value = m[2] as string;
     if (!/\d/.test(value)) continue;
     const parts = value.split(/[_.-]/);
-    if (parts.length > 1 && parts.every((p) => /^[A-Za-z0-9]{1,12}$/.test(p))) {
+    if (
+      parts.length > 1 &&
+      parts.every(
+        (p) => /^[A-Za-z]+$/.test(p) || /^[A-Za-z]{0,2}\d{1,6}$/.test(p),
+      )
+    ) {
       continue;
     }
     if (shannonEntropy(value) <= 3.5) continue;
@@ -140,9 +145,12 @@ function scanText(
   return undefined;
 }
 
-/** Scan the body and every ref field (invariant 4); throws SecretFoundError on the first match. */
+/** Scan the body, `to`, and every ref field (invariant 4); throws SecretFoundError on the first match. */
 export function assertNoSecrets(env: EnvelopeInput): void {
-  const fields: [string, string | undefined][] = [["body", env.body]];
+  const fields: [string, string | undefined][] = [
+    ["body", env.body],
+    ["to", env.to],
+  ];
   (env.refs ?? []).forEach((ref, i) => {
     for (const k of ["repo", "path", "lines", "commit"] as const) {
       fields.push([`refs[${i}].${k}`, ref[k]]);
