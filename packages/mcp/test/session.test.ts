@@ -115,6 +115,38 @@ test("own messages are never unread and do not wake wait", async () => {
   expect(await pending).toBe("No new messages in 1s.");
 });
 
+test("two members both named dev on separate machines see each other (AE1)", async () => {
+  const a = member("dev");
+  const b = member("dev", "gemini");
+  await until(
+    () =>
+      a.session.status().connections === 2 &&
+      b.session.status().connections === 2,
+    5000,
+    "both live",
+  );
+  await a.session.send({ kind: "question", body: "from-a" });
+  await until(() => b.session.status().unread === 1, 5000, "b unread");
+  const inbox = b.session.inbox();
+  expect(inbox).toContain("from-a");
+  expect(inbox).toMatch(/untrusted|information/i);
+  await b.session.send({ kind: "answer", body: "from-b" });
+  await until(() => a.session.status().unread === 1, 5000, "a unread");
+  const aInbox = a.session.inbox();
+  expect(aInbox).toContain("from-b");
+  expect(aInbox).not.toContain("from-a");
+});
+
+test("a second session on the same home treats the first session's post as own (KTD2)", async () => {
+  const a = member("alice");
+  const second = startMember(a.home, relay, room, "alice", "codex");
+  sessions.push(second);
+  await until(() => second.status().connection === "live", 5000, "second live");
+  await a.session.send({ kind: "fyi", body: "first-session" });
+  await sleep(100);
+  expect(second.status().unread).toBe(0);
+});
+
 test("abort during wait keeps the message unread for the next inbox", async () => {
   const { session, b } = await pair();
   const ac = new AbortController();

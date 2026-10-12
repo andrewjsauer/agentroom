@@ -83,6 +83,28 @@ test("AE2: a replaced draft refuses the old hash; the new hash posts the draft t
   expect(reasonOf(ok.out)).toBe(
     `Sent draft ${d2.hash} to room ${r.roomId.slice(0, 8)} (thread ${q.thread.slice(0, 8)}) and approved the thread as alice (human). Sent text: second\nline`,
   );
+  // The release recorded both ids as sent before the puts: the draft is own, the human approve
+  // stays unread for the agent (M3 KTD14).
+  const end = Date.now() + 5000;
+  while (session.status().unread < 2) {
+    if (Date.now() > end) throw new Error("approve not seen");
+    await new Promise((res) => setTimeout(res, 5));
+  }
+  const lines = readFileSync(
+    join(roomDir(r.home, r.roomId), "queue.jsonl"),
+    "utf8",
+  ).split("\n");
+  const sentAt = lines.findIndex(
+    (l) => l.includes('"t":"sent"') && l.includes(draft.id),
+  );
+  const msgAt = lines.findIndex(
+    (l) => l.includes('"t":"msg"') && l.includes(draft.id),
+  );
+  expect(sentAt).toBeGreaterThanOrEqual(0);
+  expect(sentAt).toBeLessThan(msgAt);
+  expect(lines[msgAt]).toContain('"own":true');
+  expect(session.status().unread).toBe(2);
+  expect(session.inbox()).not.toContain("second");
 });
 
 test("AE3: an envelope edited after hashing is refused and the file kept", async () => {

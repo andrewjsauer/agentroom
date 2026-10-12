@@ -187,6 +187,8 @@ export function createRoomSession(opts: {
     string,
     { resolve(seq: number): void; reject(err: Error): void }
   >();
+  /** Envelope ids posted from this machine: own echoes are decided by id, not member name. */
+  const localIds = replay.sentIds;
   const waiters = new Set<() => void>();
   let sendChain: Promise<unknown> = Promise.resolve();
 
@@ -255,11 +257,12 @@ export function createRoomSession(opts: {
     });
   };
 
-  /** Apply `read` records another process (the prompt hook) appended (KTD13, KTD14). */
+  /** Apply `read` and `sent` records other processes (the prompt hook, the CLI) appended. */
   const syncExternalReads = () => {
     if (gone) return;
     const tail = readQueueTail(home, roomId, queueBytes);
     queueBytes = tail.bytes;
+    for (const id of tail.sentIds) localIds.add(id);
     let changed = false;
     for (const id of tail.readIds) changed = unread.delete(id) || changed;
     if (changed) persistStatus();
@@ -271,12 +274,12 @@ export function createRoomSession(opts: {
   };
 
   /**
-   * Notify for a live message from another member that needs this one, once per room across
+   * Notify for a live message from elsewhere that needs this member, once per room across
    * processes: whoever creates `<room>/notified/<hash of id>` first raises it (KTD16).
    */
   const maybeNotify = (seq: number, env: Envelope) => {
     if (liveAfter === undefined || seq <= liveAfter) return;
-    if (env.from.member === session.room.member || !isNeedsYou(env)) return;
+    if (!isNeedsYou(env)) return;
     const dir = join(roomDir(home, roomId), "notified");
     const name = createHash("sha256").update(env.id).digest("hex").slice(0, 32);
     try {
@@ -297,6 +300,8 @@ export function createRoomSession(opts: {
 
   const post = async (env: Envelope): Promise<number> => {
     const blob = await sealOutbound(env);
+    localIds.add(env.id);
+    appendQueue(home, roomId, [{ t: "sent", ids: [env.id] }]);
     const echo = new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         pendingEcho.delete(env.id);
@@ -339,11 +344,12 @@ export function createRoomSession(opts: {
       persistStatus();
       return;
     }
-    // Own: this process's send, or this member's agent posting from elsewhere (a draft released
-    // by the hook, another session). This member's human stays unread for the agent (KTD14).
-    const own =
-      pending !== undefined ||
-      (env.from.member === session.room.member && !isHuman(env));
+    // Own: an id posted from this machine (this process, another session, a CLI post or a draft
+    // released by the hook), all recorded as `sent` before the put. This member's human posts
+    // stay unread for the agent (KTD14), and a same-named member elsewhere is not local.
+    if (!pending && !localIds.has(env.id)) syncExternalReads();
+    const local = pending !== undefined || localIds.has(env.id);
+    const own = local && !isHuman(env);
     seen.add(env.id);
     history.push({ seq, env, own });
     const record: QueueRecord = { t: "msg", seq, env, own };
@@ -355,7 +361,7 @@ export function createRoomSession(opts: {
     } else if (!own && env.kind !== "presence") {
       unread.add(env.id);
       wake();
-      maybeNotify(seq, env);
+      if (!local) maybeNotify(seq, env);
     }
     persistStatus();
   };

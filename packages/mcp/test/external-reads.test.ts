@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   deriveRoom,
@@ -157,18 +157,38 @@ test("an older status.json without the new fields still parses", () => {
   ).toBeUndefined();
 });
 
-test("this member's agent posting from elsewhere is own; this member's human is unread", async () => {
+test("an id recorded as sent is own; a same-named member elsewhere and this member's human are unread", async () => {
   const s = await start();
-  const agentId = await inject({
+  // A CLI post or hook release from this machine writes `sent` before its put.
+  const releasedId = ulid();
+  appendFileSync(
+    queuePath(),
+    `${JSON.stringify({ t: "sent", ids: [releasedId] })}\n`,
+  );
+  await inject({
+    id: releasedId,
+    thread: releasedId,
     from: { member: "alice", agent: "claude-code", via: "hook" },
   });
-  const humanId = await inject({
+  const otherAliceId = await inject({
+    from: { member: "alice", agent: "codex", via: "mcp" },
+  });
+  const humanId = ulid();
+  appendFileSync(
+    queuePath(),
+    `${JSON.stringify({ t: "sent", ids: [humanId] })}\n`,
+  );
+  await inject({
+    id: humanId,
+    thread: humanId,
     from: { member: "alice", agent: "human", via: "hook" },
   });
   await until(() => replayQueue(home, room.roomId).seen.has(humanId));
   const q = replayQueue(home, room.roomId);
-  expect(q.history.find((m) => m.env.id === agentId)?.own).toBe(true);
-  expect([...q.unread]).toEqual([humanId]);
-  expect(s.status().unread).toBe(1);
-  expect(readFileSync(queuePath(), "utf8")).toContain(agentId);
+  expect(q.history.find((m) => m.env.id === releasedId)?.own).toBe(true);
+  expect(q.history.find((m) => m.env.id === otherAliceId)?.own).toBe(false);
+  expect(q.history.find((m) => m.env.id === humanId)?.own).toBe(false);
+  expect([...q.unread].sort()).toEqual([otherAliceId, humanId].sort());
+  expect(s.status().unread).toBe(2);
+  expect(q.sentIds.has(releasedId)).toBe(true);
 });

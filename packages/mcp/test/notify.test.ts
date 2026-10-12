@@ -5,6 +5,7 @@ import { deriveRoom, parseShareCode, seal, ulid } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
+  appendQueue,
   createNotifier,
   createRoomSession,
   notificationText,
@@ -157,8 +158,10 @@ describe("session notifications", () => {
     return s;
   };
 
-  const inject = async (e: Partial<Envelope>) => {
+  /** `local` records the id as sent from this machine first, like a CLI post. */
+  const inject = async (e: Partial<Envelope>, h?: string) => {
     const id = ulid();
+    if (h) appendQueue(h, room.roomId, [{ t: "sent", ids: [id] }]);
     const { key } = deriveRoom(parseShareCode(room.code));
     relay.inject(
       room.roomId,
@@ -171,27 +174,39 @@ describe("session notifications", () => {
     return id;
   };
 
-  test("live needs-you messages notify; others, own, and own-member messages do not", async () => {
+  test("live needs-you messages notify; others and posts from this machine do not", async () => {
     const h = home();
     const s = await start(h);
     await inject({ requiresHuman: true });
     await inject({ kind: "question", to: "alice" });
     await inject({ to: "carol" });
     await inject({ kind: "presence" });
+    await inject(
+      {
+        requiresHuman: true,
+        from: { member: "alice", agent: "human", via: "hook" },
+      },
+      h,
+    );
+    await inject(
+      {
+        requiresHuman: true,
+        from: { member: "alice", agent: "codex", via: "mcp" },
+      },
+      h,
+    );
+    // Another machine's member also named alice is not this machine: it notifies.
     await inject({
       requiresHuman: true,
-      from: { member: "alice", agent: "human", via: "hook" },
+      from: { member: "alice", agent: "gemini", via: "mcp" },
     });
-    await inject({
-      requiresHuman: true,
-      from: { member: "alice", agent: "codex", via: "mcp" },
-    });
-    await until(() => (relay.snapshot(room.roomId)?.seq ?? 0) >= 7);
-    await until(() => s.status().unread === 4);
+    await until(() => (relay.snapshot(room.roomId)?.seq ?? 0) >= 8);
+    await until(() => s.status().unread === 5);
     await sleep(50);
     expect(got).toEqual([
       ["agentroom: bob needs you", "hello"],
       ["agentroom: question for you from bob", "hello"],
+      ["agentroom: alice needs you", "hello"],
     ]);
   });
 

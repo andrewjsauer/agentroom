@@ -46,6 +46,8 @@ export const QueueRecord = z.discriminatedUnion("t", [
     own: z.boolean(),
   }),
   z.object({ t: z.literal("read"), ids: z.array(z.string()) }),
+  /** Ids posted from this machine, written before the put so the echo is recognized as own. */
+  z.object({ t: z.literal("sent"), ids: z.array(z.string()) }),
 ]);
 export type QueueRecord = z.infer<typeof QueueRecord>;
 
@@ -140,6 +142,8 @@ export interface Replay {
   seen: Set<string>;
   history: StoredMessage[];
   unread: Set<string>;
+  /** Envelope ids posted from this machine (`sent` records). */
+  sentIds: Set<string>;
   lastSeq: number;
   /** Bytes of queue.jsonl up to the last complete line; reading resumes here. */
   bytes: number;
@@ -151,6 +155,7 @@ export function replayQueue(home: string, roomId: string): Replay {
     seen: new Set(),
     history: [],
     unread: new Set(),
+    sentIds: new Set(),
     lastSeq: 0,
     bytes: 0,
   };
@@ -173,6 +178,10 @@ export function replayQueue(home: string, roomId: string): Replay {
       for (const id of rec.ids) replay.unread.delete(id);
       continue;
     }
+    if (rec.t === "sent") {
+      for (const id of rec.ids) replay.sentIds.add(id);
+      continue;
+    }
     replay.lastSeq = Math.max(replay.lastSeq, rec.seq);
     if (replay.seen.has(rec.env.id)) continue;
     replay.seen.add(rec.env.id);
@@ -184,33 +193,35 @@ export function replayQueue(home: string, roomId: string): Replay {
 
 /**
  * Read records appended to queue.jsonl at or after byte `from` by other processes (KTD14).
- * Returns the ids marked read and the offset after the last complete line; a torn tail is left
+ * Returns the ids marked read, the ids sent, and the offset after the last complete line; a torn tail is left
  * for the next call. `msg` lines are ignored: the session already has them.
  */
 export function readQueueTail(
   home: string,
   roomId: string,
   from: number,
-): { readIds: string[]; bytes: number } {
+): { readIds: string[]; sentIds: string[]; bytes: number } {
   let buf: Buffer;
   try {
     buf = readFileSync(join(roomDir(home, roomId), "queue.jsonl"));
   } catch {
-    return { readIds: [], bytes: from };
+    return { readIds: [], sentIds: [], bytes: from };
   }
   const end = buf.lastIndexOf(10) + 1;
-  if (end <= from) return { readIds: [], bytes: from };
+  if (end <= from) return { readIds: [], sentIds: [], bytes: from };
   const readIds: string[] = [];
+  const sentIds: string[] = [];
   for (const line of buf.subarray(from, end).toString("utf8").split("\n")) {
-    if (!line.includes('"t":"read"')) continue;
+    if (!line.includes('"t":"read"') && !line.includes('"t":"sent"')) continue;
     try {
       const rec = QueueRecord.parse(JSON.parse(line));
       if (rec.t === "read") readIds.push(...rec.ids);
+      if (rec.t === "sent") sentIds.push(...rec.ids);
     } catch {
       // Unparseable line: skipped, as in replayQueue.
     }
   }
-  return { readIds, bytes: end };
+  return { readIds, sentIds, bytes: end };
 }
 
 export function writeStatus(

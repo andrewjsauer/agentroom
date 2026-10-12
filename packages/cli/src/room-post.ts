@@ -1,5 +1,6 @@
 import {
   agentroomHome,
+  appendQueue,
   connectOnce,
   type OnceSession,
   type RoomFile,
@@ -33,7 +34,10 @@ export interface PostSession {
   end(): void;
 }
 
-/** A one-shot session for a CLI sender. The CLI never writes queue.jsonl. */
+/**
+ * A one-shot session for a CLI sender. Its only queue.jsonl write is a `sent` record before each
+ * put, so the room's MCP sessions recognize the echo as posted from this machine.
+ */
 export async function connectForPost(
   roomFlag: string | undefined,
   ctx: CliContext,
@@ -82,7 +86,9 @@ export async function connectForPost(
     history,
     maxAgentChain,
     async post(env) {
-      return once.put(await seal(env, key, roomId));
+      const blob = await seal(env, key, roomId);
+      appendQueue(home, roomId, [{ t: "sent", ids: [env.id] }]);
+      return once.put(blob);
     },
     end: () => once.end(),
   };

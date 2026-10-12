@@ -17,6 +17,7 @@ import {
   deleteRoomDir,
   type RoomFile,
   readCurrent,
+  readQueueTail,
   readRoomFile,
   readStatus,
   replayQueue,
@@ -132,6 +133,43 @@ describe("replayQueue", () => {
     const r = replayQueue(home, ROOM);
     expect([...r.unread]).toEqual(["A"]);
     expect(r.lastSeq).toBe(1);
+  });
+});
+
+describe("sent records", () => {
+  beforeEach(() => writeRoomFile(home, room));
+
+  test("replayQueue collects sentIds without touching seq, history or unread", () => {
+    appendQueue(home, ROOM, [
+      { t: "sent", ids: ["S1"] },
+      { t: "msg", seq: 1, env: env("A"), own: false },
+      { t: "sent", ids: ["S2"] },
+    ]);
+    const r = replayQueue(home, ROOM);
+    expect([...r.sentIds]).toEqual(["S1", "S2"]);
+    expect(r.history).toHaveLength(1);
+    expect([...r.unread]).toEqual(["A"]);
+    expect(r.lastSeq).toBe(1);
+  });
+
+  test("an old queue without sent records gives an empty set", () => {
+    appendQueue(home, ROOM, [{ t: "msg", seq: 1, env: env("A"), own: false }]);
+    expect(replayQueue(home, ROOM).sentIds.size).toBe(0);
+  });
+
+  test("readQueueTail returns read and sent ids after the offset and leaves a torn tail", () => {
+    appendQueue(home, ROOM, [{ t: "sent", ids: ["OLD"] }]);
+    const from = replayQueue(home, ROOM).bytes;
+    appendQueue(home, ROOM, [
+      { t: "msg", seq: 1, env: env("A"), own: false },
+      { t: "sent", ids: ["S1"] },
+      { t: "read", ids: ["A"] },
+    ]);
+    appendFileSync(join(roomDir(home, ROOM), "queue.jsonl"), '{"t":"sent","id');
+    const tail = readQueueTail(home, ROOM, from);
+    expect(tail.sentIds).toEqual(["S1"]);
+    expect(tail.readIds).toEqual(["A"]);
+    expect(readQueueTail(home, ROOM, tail.bytes).sentIds).toEqual([]);
   });
 });
 
