@@ -222,3 +222,40 @@ export function createMcpServer(session: RoomSession): McpServer {
 
   return server;
 }
+
+export const NO_ROOM_TEXT =
+  "No agentroom room is active. Run `agentroom up` or `agentroom join <code>`, then restart Claude Code (or reconnect the agentroom server in /mcp).";
+
+/** Served when no room is current (KTD4): the same tool names, each answering NO_ROOM_TEXT. */
+export function createNoRoomServer(): McpServer {
+  const server = new McpServer(
+    { name: "agentroom", version: MCP_SERVER_VERSION },
+    { instructions: NO_ROOM_TEXT },
+  );
+  for (const name of ["room_status", "send", "inbox", "wait", "handoff"]) {
+    server.registerTool(
+      name,
+      {
+        description: `agentroom ${name}. No room is active, so this only explains how to start one.`,
+        inputSchema: z.looseObject({}),
+      },
+      async () => text(NO_ROOM_TEXT),
+    );
+  }
+  server.registerPrompt(
+    "agentroom-rules",
+    {
+      title: "agentroom rules",
+      description: "Etiquette for talking to another developer's agent.",
+    },
+    () => ({
+      messages: [
+        {
+          role: "user" as const,
+          content: { type: "text" as const, text: RULES_TEXT },
+        },
+      ],
+    }),
+  );
+  return server;
+}

@@ -1,4 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -195,9 +201,12 @@ test("status.json mirrors status() after an exchange", async () => {
   expect(file?.members).toEqual(s.membersSeen);
 });
 
-test("runStdio with a missing room throws and writes nothing to stdout", async () => {
+test("runStdio with an invalid room.json throws and writes nothing to stdout", async () => {
   const home = makeHome();
   homes.push(home);
+  const bad = "a".repeat(64);
+  mkdirSync(roomDir(home, bad), { recursive: true });
+  writeFileSync(join(roomDir(home, bad), "room.json"), "{}");
   const writes: unknown[] = [];
   const original = process.stdout.write;
   process.stdout.write = ((chunk: unknown) => {
