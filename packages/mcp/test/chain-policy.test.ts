@@ -1,4 +1,4 @@
-import { open } from "@agentroom/protocol";
+import { open, seal, ulid } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, expect, test } from "vitest";
 import { createRoomSession, type RoomSession } from "../src/index.js";
@@ -255,4 +255,37 @@ test("stored agent envelopes stay agent-tagged via mcp", async () => {
     ?.blob as string;
   const env = await open(blob, room.key, room.roomId);
   expect(env.from).toEqual({ member: "alice", agent: "codex", via: "mcp" });
+});
+
+test("a fresh session's first send waits for the since=0 backlog before counting", async () => {
+  relay = await startRelay({ port: 0, log: () => {} });
+  room = await createTestRoom(relay);
+  // 294 human messages, then 6 agent questions in new threads: the room-wide run is at 2N.
+  for (let i = 0; i < 300; i++) {
+    const id = ulid();
+    const from =
+      i < 294
+        ? { member: "bob", agent: "human", via: "cli" as const }
+        : { member: "bob", agent: "codex", via: "mcp" as const };
+    const env = {
+      v: 1 as const,
+      id,
+      ts: Date.now(),
+      from,
+      kind: "question" as const,
+      thread: id,
+      body: "x".repeat(2000),
+    };
+    relay.inject(room.roomId, await seal(env, room.key, room.roomId));
+  }
+  const home = makeHome();
+  homes.push(home);
+  const carol = startMember(home, relay, room, "carol");
+  sessions.push(carol);
+  while (carol.status().connection !== "live") {
+    await new Promise((r) => setImmediate(r));
+  }
+  await expect(carol.send({ kind: "question", body: "hi" })).rejects.toThrow(
+    "This room needs a human. 6 agent messages in a row across threads",
+  );
 });

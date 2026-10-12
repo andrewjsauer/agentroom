@@ -154,7 +154,10 @@ export function createRoomSession(opts: {
   let gone = false;
   let goneCode: GoneCode = "room_expired";
   let maxAgentChain = DEFAULT_MAX_AGENT_CHAIN;
-  let metaReady: Promise<void> = Promise.resolve();
+  /** Settles once the latest welcome's meta is read and its backlog is in `history` (KTD14). */
+  let ready: Promise<void> = Promise.resolve();
+  let processedSeq = 0;
+  let catchUp: { head: number; resolve(): void } | undefined;
   let closed = false;
   let finalReadDone = false;
   let presenceSent = false;
@@ -295,6 +298,14 @@ export function createRoomSession(opts: {
     persistStatus();
   };
 
+  /** Release `send` once inbound processing reaches the welcome head, or at once when `force`. */
+  const settleCatchUp = (force: boolean) => {
+    if (catchUp && (force || processedSeq >= catchUp.head)) {
+      catchUp.resolve();
+      catchUp = undefined;
+    }
+  };
+
   const onGone = (code: GoneCode) => {
     gone = true;
     goneCode = code;
@@ -322,7 +333,12 @@ export function createRoomSession(opts: {
     initialSince: 0,
     backoff: opts.backoff,
     onWelcome: (w) => {
-      metaReady = openMeta(w.meta, key, roomId).then(
+      catchUp?.resolve();
+      const caughtUp = new Promise<void>((resolve) => {
+        catchUp = { head: w.seq, resolve };
+      });
+      settleCatchUp(false);
+      const meta = openMeta(w.meta, key, roomId).then(
         (m) => {
           maxAgentChain = m.maxAgentChain;
         },
@@ -333,6 +349,7 @@ export function createRoomSession(opts: {
           );
         },
       );
+      ready = Promise.all([meta, caughtUp]).then(() => {});
       connections = w.members;
       expiresAt = w.expiresAt;
       ttlMs = w.expiresAt - Date.now();
@@ -360,11 +377,16 @@ export function createRoomSession(opts: {
       }
     },
     onMsg: (seq, blob) => {
-      onMsg(seq, blob).catch((err: Error) => {
-        process.stderr.write(
-          `agentroom: inbound message not processed: ${err.message}\n`,
-        );
-      });
+      onMsg(seq, blob)
+        .catch((err: Error) => {
+          process.stderr.write(
+            `agentroom: inbound message not processed: ${err.message}\n`,
+          );
+        })
+        .finally(() => {
+          processedSeq = Math.max(processedSeq, seq);
+          settleCatchUp(false);
+        });
     },
     onPresence: (n) => {
       connections = n;
@@ -372,7 +394,10 @@ export function createRoomSession(opts: {
     },
     onGone,
     onError,
-    onState: () => persistStatus(),
+    onState: (state) => {
+      if (state !== "live") settleCatchUp(true);
+      persistStatus();
+    },
   });
 
   /** Gone check, thread resolution (KTD2), then the envelope with the non-human `from`. */
@@ -436,7 +461,7 @@ export function createRoomSession(opts: {
     inbox,
     send(input) {
       const run = async () => {
-        await metaReady;
+        await ready;
         const env = build(input, "mcp");
         const refusal = checkChain(
           chainState(ordered(), maxAgentChain),
@@ -481,6 +506,7 @@ export function createRoomSession(opts: {
     close() {
       closed = true;
       client.stop();
+      settleCatchUp(true);
       for (const p of pendingEcho.values()) {
         p.reject(new Error("The session is closing."));
       }
