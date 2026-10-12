@@ -1,4 +1,5 @@
 import {
+  type ErrorCode,
   type ErrorFrame,
   type HelloFrame,
   PROTOCOL_VERSION,
@@ -8,7 +9,7 @@ import {
 import WebSocket from "ws";
 
 export type ConnectionState = "connecting" | "live" | "backoff" | "gone";
-export type GoneCode = "room_not_found" | "room_expired";
+export type GoneCode = "room_not_found" | "room_expired" | "closed";
 
 export interface RelayClientOptions {
   url: string;
@@ -18,6 +19,8 @@ export interface RelayClientOptions {
   onMsg(seq: number, blob: string): void;
   onPresence(members: number): void;
   onGone(code: GoneCode): void;
+  /** Every relay error except the terminal ones (KTD13). */
+  onError?(code: ErrorCode, message: string): void;
   onState?(state: ConnectionState): void;
   backoff?: { initialMs?: number; maxMs?: number };
 }
@@ -131,9 +134,13 @@ export class RelayClient {
           this.opts.onGone(frame.code);
         } else {
           log(`relay error ${frame.code}: ${frame.message}`);
+          this.opts.onError?.(frame.code, frame.message);
         }
         break;
       case "closed":
+        this.setState("gone");
+        this.stop();
+        this.opts.onGone("closed");
         break;
     }
   }
@@ -179,6 +186,144 @@ export function oneShot(opts: {
       finish(() =>
         reject(new Error(`relay at ${opts.url} closed the connection`)),
       ),
+    );
+  });
+}
+
+/** A relay error frame surfaced as an exception; `code` is the relay's error code. */
+export class RelayError extends Error {
+  override name = "RelayError";
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export interface OnceSession {
+  welcome: WelcomeFrame;
+  /** With `since` in the hello: every buffered `msg` up to `welcome.seq`. */
+  msgs: { seq: number; blob: string }[];
+  /** Post an opaque blob; resolves with the seq of its echo. */
+  put(blob: string): Promise<number>;
+  /** Send `close`; resolves on `closed`. */
+  close(sig: string): Promise<void>;
+  end(): void;
+}
+
+/**
+ * One-shot relay session for CLI senders (KTD19). Handles opaque blobs only; it never
+ * builds an envelope. Resolves after the welcome and, when the hello has `since`, once the
+ * `msg` with seq `welcome.seq` (the head) has arrived.
+ */
+export function connectOnce(opts: {
+  url: string;
+  hello: HelloFrame;
+  timeoutMs?: number;
+}): Promise<OnceSession> {
+  const timeoutMs = opts.timeoutMs ?? 10_000;
+  return new Promise((resolveConnect, rejectConnect) => {
+    const ws = new WebSocket(opts.url);
+    const msgs: { seq: number; blob: string }[] = [];
+    let welcome: WelcomeFrame | undefined;
+    let ready = false;
+    let pending:
+      | {
+          match(f: RelayFrame): boolean;
+          resolve(f: RelayFrame): void;
+          reject(e: Error): void;
+        }
+      | undefined;
+    let timer = setTimeout(
+      () => fail(new Error(`relay at ${opts.url} did not answer`)),
+      timeoutMs,
+    );
+    const end = () => {
+      clearTimeout(timer);
+      ws.removeAllListeners();
+      ws.on("error", () => {});
+      ws.terminate();
+    };
+    const fail = (e: Error) => {
+      end();
+      if (!ready) rejectConnect(e);
+      else pending?.reject(e);
+      pending = undefined;
+    };
+    const session: OnceSession = {
+      get welcome() {
+        return welcome as WelcomeFrame;
+      },
+      msgs,
+      put(blob) {
+        return wait(
+          (f) => f.t === "msg" && f.blob === blob,
+          () => ws.send(JSON.stringify({ t: "put", blob })),
+        ).then((f) => (f as { seq: number }).seq);
+      },
+      close(sig) {
+        return wait(
+          (f) => f.t === "closed",
+          () => ws.send(JSON.stringify({ t: "close", sig })),
+        ).then(() => end());
+      },
+      end,
+    };
+    const wait = (
+      match: (f: RelayFrame) => boolean,
+      act: () => void,
+    ): Promise<RelayFrame> =>
+      new Promise((resolve, reject) => {
+        clearTimeout(timer);
+        timer = setTimeout(
+          () => fail(new Error(`relay at ${opts.url} did not confirm`)),
+          timeoutMs,
+        );
+        pending = { match, resolve, reject };
+        act();
+      });
+    const finishCatchUp = () => {
+      ready = true;
+      clearTimeout(timer);
+      resolveConnect(session);
+    };
+    ws.on("open", () => ws.send(JSON.stringify(opts.hello)));
+    ws.on("message", (data) => {
+      let f: RelayFrame;
+      try {
+        f = RelayFrame.parse(JSON.parse(data.toString()));
+      } catch {
+        return;
+      }
+      if (f.t === "error") {
+        fail(new RelayError(f.code, f.message));
+        return;
+      }
+      if (!ready) {
+        if (f.t === "welcome") {
+          welcome = f;
+          if (opts.hello.since === undefined || f.seq <= opts.hello.since) {
+            finishCatchUp();
+          }
+        } else if (f.t === "msg" && welcome) {
+          msgs.push({ seq: f.seq, blob: f.blob });
+          if (f.seq >= welcome.seq) finishCatchUp();
+        }
+        return;
+      }
+      if (pending?.match(f)) {
+        const p = pending;
+        pending = undefined;
+        clearTimeout(timer);
+        p.resolve(f);
+      }
+    });
+    ws.on("error", (err) =>
+      fail(new Error(`cannot reach relay at ${opts.url}: ${err.message}`)),
+    );
+    ws.on("close", () =>
+      fail(new Error(`relay at ${opts.url} closed the connection`)),
     );
   });
 }

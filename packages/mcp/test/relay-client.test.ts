@@ -1,10 +1,13 @@
+import { generateCloseKeyPair, signClose } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   backoffDelay,
+  connectOnce,
   type GoneCode,
   oneShot,
   RelayClient,
+  RelayError,
 } from "../src/index.js";
 
 const ROOM = "e".repeat(64);
@@ -28,14 +31,14 @@ afterEach(async () => {
   await relay.close();
 });
 
-async function createRoom(): Promise<void> {
+async function createRoom(closeKey = "pk"): Promise<void> {
   const res = await oneShot({
     url: relay.url,
     hello: {
       t: "hello",
       room: ROOM,
       proto: 1,
-      create: { closeKey: "pk", meta: "M" },
+      create: { closeKey, meta: "M" },
     },
   });
   expect(res.t).toBe("welcome");
@@ -44,6 +47,7 @@ async function createRoom(): Promise<void> {
 function client(initialSince = 0) {
   const msgs: number[] = [];
   const gone: GoneCode[] = [];
+  const errors: string[] = [];
   let welcomes = 0;
   const c = new RelayClient({
     url: relay.url,
@@ -55,11 +59,12 @@ function client(initialSince = 0) {
     onMsg: (seq) => msgs.push(seq),
     onPresence: () => {},
     onGone: (code) => gone.push(code),
+    onError: (code) => errors.push(code),
     backoff: { initialMs: 5, maxMs: 20 },
   });
   clients.push(c);
   c.start();
-  return { c, msgs, gone, welcomes: () => welcomes };
+  return { c, msgs, gone, errors, welcomes: () => welcomes };
 }
 
 async function until(cond: () => boolean, ms = 3000): Promise<void> {
@@ -150,4 +155,128 @@ test("oneShot returns welcome for create and room_not_found for unknown", async 
     hello: { t: "hello", room: "f".repeat(64), proto: 1 },
   });
   expect(res).toMatchObject({ t: "error", code: "room_not_found" });
+});
+
+const hello = (extra: Record<string, unknown> = {}) => ({
+  t: "hello" as const,
+  room: ROOM,
+  proto: 1 as const,
+  ...extra,
+});
+
+async function closeRoom(secretKey: string): Promise<void> {
+  const s = await connectOnce({
+    url: relay.url,
+    hello: hello({ closeOnly: true }),
+  });
+  await s.close(await signClose(secretKey, ROOM, s.welcome.nonce));
+}
+
+test("closed: onGone('closed') once, state gone, no reconnect", async () => {
+  const kp = await generateCloseKeyPair();
+  await createRoom(kp.publicKey);
+  const { c, gone, welcomes } = client();
+  await until(() => c.state === "live");
+  await closeRoom(kp.secretKey);
+  await until(() => gone.length === 1);
+  expect(gone).toEqual(["closed"]);
+  expect(c.state).toBe("gone");
+  await new Promise((r) => setTimeout(r, 50));
+  expect(welcomes()).toBe(1);
+});
+
+test("rate_limited reaches onError and the connection stays live", async () => {
+  await relay.close();
+  relay = await startRelay({
+    port: 0,
+    log: () => {},
+    rateLimit: { burst: 1, perSec: 0.001 },
+  });
+  await createRoom();
+  const { c, errors } = client();
+  await until(() => c.state === "live");
+  await c.put("AAAA");
+  await c.put("BBBB");
+  await until(() => errors.length === 1);
+  expect(errors).toEqual(["rate_limited"]);
+  expect(c.state).toBe("live");
+});
+
+test("room_full is reported, the client backs off, and connects once a slot frees", async () => {
+  await relay.close();
+  relay = await startRelay({ port: 0, log: () => {}, maxMembers: 1 });
+  await createRoom();
+  const holder = await connectOnce({ url: relay.url, hello: hello() });
+  const { c, errors } = client();
+  await until(() => errors.includes("room_full"));
+  holder.end();
+  await until(() => c.state === "live");
+});
+
+test("connectOnce with since 0 waits for the head seq, even with a trimmed buffer", async () => {
+  await relay.close();
+  relay = await startRelay({ port: 0, log: () => {}, bufferSize: 2 });
+  await createRoom();
+  const empty = await connectOnce({
+    url: relay.url,
+    hello: hello({ since: 0 }),
+  });
+  expect(empty.msgs).toEqual([]);
+  empty.end();
+  for (let i = 0; i < 5; i++) relay.inject(ROOM, "AAAA");
+  const s = await connectOnce({ url: relay.url, hello: hello({ since: 0 }) });
+  expect(s.welcome.seq).toBe(5);
+  expect(s.msgs.map((m) => m.seq)).toEqual([4, 5]);
+  s.end();
+});
+
+test("connectOnce.put resolves with the echo seq, ignoring a peer's message", async () => {
+  await createRoom();
+  const s = await connectOnce({ url: relay.url, hello: hello() });
+  relay.inject(ROOM, "PEER");
+  expect(await s.put("MINE")).toBe(2);
+  s.end();
+});
+
+test("connectOnce.put rejects with rate_limited", async () => {
+  await relay.close();
+  relay = await startRelay({
+    port: 0,
+    log: () => {},
+    rateLimit: { burst: 1, perSec: 0.001 },
+  });
+  await createRoom();
+  const s = await connectOnce({ url: relay.url, hello: hello() });
+  await s.put("AAAA");
+  await expect(s.put("BBBB")).rejects.toMatchObject({ code: "rate_limited" });
+  s.end();
+});
+
+test("connectOnce close: resolves on closed; bad signature rejects", async () => {
+  const kp = await generateCloseKeyPair();
+  const other = await generateCloseKeyPair();
+  await createRoom(kp.publicKey);
+  const bad = await connectOnce({
+    url: relay.url,
+    hello: hello({ closeOnly: true }),
+  });
+  await expect(
+    bad.close(await signClose(other.secretKey, ROOM, bad.welcome.nonce)),
+  ).rejects.toMatchObject({ code: "bad_signature" });
+  await closeRoom(kp.secretKey);
+  expect(relay.snapshot(ROOM)).toBeUndefined();
+});
+
+test("connectOnce: unknown room rejects room_not_found; unreachable rejects", async () => {
+  await expect(
+    connectOnce({ url: relay.url, hello: hello() }),
+  ).rejects.toBeInstanceOf(RelayError);
+  await expect(
+    connectOnce({ url: relay.url, hello: hello() }),
+  ).rejects.toMatchObject({
+    code: "room_not_found",
+  });
+  await expect(
+    connectOnce({ url: "ws://127.0.0.1:1", hello: hello() }),
+  ).rejects.toThrow("cannot reach relay");
 });
