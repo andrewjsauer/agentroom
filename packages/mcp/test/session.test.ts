@@ -143,7 +143,12 @@ test("a second session on the same home treats the first session's post as own (
   sessions.push(second);
   await until(() => second.status().connection === "live", 5000, "second live");
   await a.session.send({ kind: "fyi", body: "first-session" });
-  await sleep(100);
+  // The agent post counts toward the chain, own or not: proof the echo reached `second`.
+  await until(
+    () => second.status().roomAgentRun.count === 1,
+    5000,
+    "second got the echo",
+  );
   expect(second.status().unread).toBe(0);
 });
 
