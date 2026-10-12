@@ -44,14 +44,20 @@ export async function runWatch(
   const { key } = deriveRoom(parseShareCode(room.secret));
   const screen = ctx.stdout as Screen;
   let model = emptyModel(roomId, room.member);
-  let selected = 0;
+  // Follows the latest thread until the user picks one; then pinned by id, because threads
+  // reorder by recency and an index would move a reply or approve to another thread.
+  let selectedId: string | undefined;
   let notice: string | undefined;
 
   const draw = () => {
+    const list = threads(model);
     const lines = renderWatch(model, {
       cols: screen.columns ?? 80,
       rows: screen.rows ?? 24,
-      selected,
+      selected:
+        selectedId === undefined
+          ? 0
+          : list.findIndex((t) => t.id === selectedId),
       input: "",
       notice,
     });
@@ -122,7 +128,7 @@ export async function runWatch(
     rl.on("line", (line) => {
       const list = threads(model);
       const input = parseInput(line, list.length);
-      const thread = list[selected]?.id;
+      const thread = selectedId ?? list[0]?.id;
       const id = ulid();
       let action: Promise<void> | undefined;
       notice = undefined;
@@ -136,7 +142,7 @@ export async function runWatch(
           notice = input.message;
           break;
         case "select":
-          selected = input.index;
+          selectedId = list[input.index]?.id;
           break;
         case "new":
           action = post(() => ({
@@ -148,7 +154,7 @@ export async function runWatch(
             thread: id,
             body: input.text,
           }));
-          selected = 0;
+          selectedId = id;
           break;
         case "reply":
         case "approve":

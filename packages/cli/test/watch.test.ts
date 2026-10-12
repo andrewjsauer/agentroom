@@ -59,3 +59,28 @@ test("driver: shows an agent message, posts a reply as human via watch, exits 1 
   expect(await done).toBe(1);
   expect(t.out()).toContain("The room was closed by its creator.");
 });
+
+test("driver: a picked thread stays selected when another thread moves to the top", async () => {
+  r = await hookRoom();
+  const a = await r.agentPost({ body: "Thread A" });
+  const b = await r.agentPost({ body: "Thread B" });
+  await r.agentPost({ body: "Thread C" });
+  const t = tty();
+  const stdin = t.stdin as PassThrough;
+  const done = main(["watch"], t.ctx);
+  const frame = () => t.out().split("\u001b[H\u001b[2J").at(-1) ?? "";
+  await until(() => frame().includes("1. Thread C"));
+  stdin.write("/thread 2\n");
+  await until(() => frame().includes("\u001b[7m2. Thread B"));
+  await r.agentPost({ body: "Follow-up", thread: a.thread, replyTo: a.id });
+  await until(() => frame().includes("\u001b[7m3. Thread B"));
+  stdin.write("Reply to B.\n");
+  await until(async () => (await r.last()).body === "Reply to B.");
+  expect(await r.last()).toMatchObject({
+    from: { agent: "human", via: "watch" },
+    thread: b.thread,
+    replyTo: b.id,
+  });
+  stdin.write("/quit\n");
+  expect(await done).toBe(0);
+});
