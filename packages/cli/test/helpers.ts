@@ -41,6 +41,7 @@ export function makeCtx(
   const ctx: CliContext = {
     env: {
       AGENTROOM_HOME: home,
+      AGENTROOM_NOTIFY: "off",
       PATH: tempDir("agentroom-path-"),
       ...overrides.env,
     },

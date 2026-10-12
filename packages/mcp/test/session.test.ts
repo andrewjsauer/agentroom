@@ -139,7 +139,7 @@ test("restart rebuilds from since=0 without duplicates and keeps only unread (AE
 
   const again = createRoomSession({
     roomId: room.roomId,
-    env: { AGENTROOM_HOME: home },
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
     backoff: { initialMs: 5, maxMs: 20 },
   });
   sessions.push(again);

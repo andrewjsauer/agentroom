@@ -61,7 +61,7 @@ async function start(
   setCurrent(home, room.roomId);
   const session = createRoomSession({
     roomId: room.roomId,
-    env: { AGENTROOM_HOME: home },
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
     externalReadMs,
   });
   sessions.push(session);

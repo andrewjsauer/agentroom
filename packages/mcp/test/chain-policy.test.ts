@@ -129,7 +129,7 @@ test("restart: counts are rebuilt from history and the fourth message is still r
   alice.close();
   const again = createRoomSession({
     roomId: room.roomId,
-    env: { AGENTROOM_HOME: homeA },
+    env: { AGENTROOM_HOME: homeA, AGENTROOM_NOTIFY: "off" },
     backoff: { initialMs: 5, maxMs: 20 },
   });
   sessions.push(again);

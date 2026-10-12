@@ -206,7 +206,7 @@ test("an MCP session at the chain limit can send again after approve", async () 
   await setup();
   const session = createRoomSession({
     roomId,
-    env: { AGENTROOM_HOME: home },
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
     backoff: { initialMs: 5, maxMs: 20 },
   });
   sessions.push(session);

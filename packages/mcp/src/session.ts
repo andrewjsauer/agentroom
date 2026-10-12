@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { closeSync, mkdirSync, openSync } from "node:fs";
+import { join } from "node:path";
 import {
   assertNoSecrets,
   chainRefusalText,
@@ -17,7 +20,8 @@ import {
   ulid,
   waitingThreads,
 } from "@agentroom/protocol";
-import { agentroomHome } from "./paths.js";
+import { createNotifier, type Notifier, notificationText } from "./notify.js";
+import { agentroomHome, roomDir } from "./paths.js";
 import { writePending } from "./pending.js";
 import {
   type ConnectionState,
@@ -143,6 +147,8 @@ export function createRoomSession(opts: {
   backoff?: RelayClientOptions["backoff"];
   /** How often to pick up `read` records written by the prompt hook (KTD14). */
   externalReadMs?: number;
+  /** Desktop notifier; defaults to the platform's (KTD16). */
+  notify?: Notifier;
 }): RoomSession {
   const home = agentroomHome(opts.env);
   const roomId = opts.roomId;
@@ -155,6 +161,11 @@ export function createRoomSession(opts: {
   let lastSeq = replay.lastSeq;
   let queueBytes = replay.bytes;
   let roomName: string | undefined;
+  /** Head seq of the first welcome; only messages above it are live enough to notify. */
+  let liveAfter: number | undefined;
+  const notifier =
+    opts.notify ??
+    createNotifier({ platform: process.platform, env: opts.env });
   const members = new Map<string, MemberSeen>();
   let connections = 0;
   let decryptFailures = 0;
@@ -259,6 +270,25 @@ export function createRoomSession(opts: {
     waiters.clear();
   };
 
+  /**
+   * Notify for a live message from another member that needs this one, once per room across
+   * processes: whoever creates `<room>/notified/<hash of id>` first raises it (KTD16).
+   */
+  const maybeNotify = (seq: number, env: Envelope) => {
+    if (liveAfter === undefined || seq <= liveAfter) return;
+    if (env.from.member === session.room.member || !isNeedsYou(env)) return;
+    const dir = join(roomDir(home, roomId), "notified");
+    const name = createHash("sha256").update(env.id).digest("hex").slice(0, 32);
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      closeSync(openSync(join(dir, name), "wx", 0o600));
+    } catch {
+      return; // Claimed by another session, or the room dir is gone.
+    }
+    const { title, text } = notificationText(env);
+    notifier(title, text);
+  };
+
   /** The single seal path for outbound envelopes. Refuses a human tag (invariant 2). */
   const sealOutbound = (env: Envelope): Promise<string> => {
     refuseHuman(env);
@@ -325,6 +355,7 @@ export function createRoomSession(opts: {
     } else if (!own && env.kind !== "presence") {
       unread.add(env.id);
       wake();
+      maybeNotify(seq, env);
     }
     persistStatus();
   };
@@ -365,6 +396,7 @@ export function createRoomSession(opts: {
     initialSince: 0,
     backoff: opts.backoff,
     onWelcome: (w) => {
+      liveAfter ??= w.seq;
       catchUp?.resolve();
       const caughtUp = new Promise<void>((resolve) => {
         catchUp = { head: w.seq, resolve };

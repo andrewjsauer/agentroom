@@ -351,7 +351,7 @@ test("mcp with a missing room serves the no-room stub", async () => {
   let client: Client | undefined;
   try {
     client = await connectMcp(
-      { ...baseEnv(home, "ws://127.0.0.1:1"), AGENTROOM_NOTIFY: "off" },
+      baseEnv(home, "ws://127.0.0.1:1"),
       "f".repeat(64),
       transports,
     );

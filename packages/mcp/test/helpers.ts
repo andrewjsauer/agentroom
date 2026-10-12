@@ -119,7 +119,7 @@ export function startMember(
   setCurrent(home, room.roomId);
   return createRoomSession({
     roomId: room.roomId,
-    env: { AGENTROOM_HOME: home },
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
     backoff: { initialMs: 5, maxMs: 20 },
   });
 }

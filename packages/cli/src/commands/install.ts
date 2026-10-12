@@ -1,13 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import {
-  accessSync,
-  constants,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { delimiter, join, sep } from "node:path";
-import { type AgentName, agentroomHome, roomExists } from "@agentroom/mcp";
+  type AgentName,
+  agentroomHome,
+  findOnPath,
+  roomExists,
+} from "@agentroom/mcp";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
@@ -24,25 +23,6 @@ export function mcpServerCommand(
     return { command: "npx", args: ["-y", "agentroom", ...tail] };
   }
   return { command: execPath, args: [entryPath, ...tail] };
-}
-
-/** Locate an executable by scanning PATH directories; no shell is involved. */
-function findOnPath(
-  path: string | undefined,
-  name: string,
-): string | undefined {
-  for (const dir of (path ?? "").split(delimiter)) {
-    if (!dir) continue;
-    const candidate = join(dir, name);
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // not here
-    }
-  }
-  return undefined;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

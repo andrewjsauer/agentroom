@@ -18,6 +18,7 @@ export function baseEnv(
 ): Record<string, string> {
   return {
     AGENTROOM_HOME: home,
+    AGENTROOM_NOTIFY: "off",
     AGENTROOM_RELAY: relayUrl,
     PATH: dirname(process.execPath),
   };
