@@ -11,6 +11,8 @@ Commands:
       Show the current room, live connections, expiry, and unread counts.
   install claude [--room <id>]
       Register the room's MCP server with Claude Code (or write .mcp.json).
+  install claude [--room <id>]
+      Register the room's MCP server with Claude Code (or write .mcp.json).
   mcp --room <id>
       Serve the room over stdio for an agent (used by the MCP config).
 
@@ -34,6 +36,7 @@ const OPTIONS = {
     relay: { type: "string" },
   },
   status: { room: { type: "string" } },
+  install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
 } satisfies Record<string, StringFlags>;
 

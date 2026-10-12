@@ -1,4 +1,5 @@
 import { parseCli, USAGE } from "./args.js";
+import { install } from "./commands/install.js";
 import { join } from "./commands/join.js";
 import { mcp } from "./commands/mcp.js";
 import { status } from "./commands/status.js";
@@ -33,6 +34,8 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return await join(parsed.positionals, parsed.values, ctx);
       case "status":
         return await status(parsed.values, ctx);
+      case "install":
+        return install(parsed.positionals, parsed.values, ctx);
       case "mcp":
         return await mcp(parsed.values, ctx);
     }
