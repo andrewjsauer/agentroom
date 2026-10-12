@@ -1,9 +1,7 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import { readRoomFile, readStatus } from "@agentroom/mcp";
 import {
   deriveRoom,
@@ -14,19 +12,23 @@ import {
   seal,
 } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import type { Client } from "@modelcontextprotocol/client";
+import type { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, beforeAll, expect, test } from "vitest";
+import {
+  BIN,
+  baseEnv,
+  call,
+  cli,
+  closeAll,
+  connectMcp,
+  until,
+} from "./helpers.js";
 
-const BIN = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../packages/cli/dist/bin.js",
-);
 const ALICE = "alice-7f3a";
 const BOB = "bob-9c1e";
 const CAROL = "carol-2b8d";
 const MSG_TAG = /<agentroom_message_[0-9a-f]{12} /g;
-const run = promisify(execFile);
 
 /** Relay factory per plan KTD1; a second relay implementation plugs in here. */
 const relayFactory = () => startRelay({ port: 0, log: () => {} });
@@ -42,67 +44,11 @@ let bob: Client;
 const transports: StdioClientTransport[] = [];
 const markers: string[] = [];
 
-function envFor(home: string): Record<string, string> {
-  return {
-    AGENTROOM_HOME: home,
-    AGENTROOM_RELAY: relay.url,
-    PATH: dirname(process.execPath),
-  };
-}
-
-async function cli(home: string, args: string[]): Promise<string> {
-  const { stdout } = await run(process.execPath, [BIN, ...args], {
-    env: envFor(home),
-  });
-  return stdout;
-}
-
-async function connect(home: string): Promise<Client> {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [BIN, "mcp", "--room", roomId],
-    env: envFor(home),
-    stderr: "inherit",
-  });
-  transports.push(transport);
-  const client = new Client({ name: "conformance", version: "0.0.0" });
-  await client.connect(transport);
-  return client;
-}
-
-interface Result {
-  text: string;
-  isError: boolean;
-  structured: Record<string, unknown>;
-}
-
-async function call(
-  client: Client,
-  name: string,
-  args: Record<string, unknown> = {},
-): Promise<Result> {
-  const r = await client.callTool({ name, arguments: args });
-  const content = r.content as { type: string; text?: string }[];
-  return {
-    text: content.map((c) => c.text ?? "").join("\n"),
-    isError: r.isError === true,
-    structured: (r.structuredContent ?? {}) as Record<string, unknown>,
-  };
-}
-
-async function until<T>(
-  probe: () => Promise<T | undefined> | T | undefined,
-  what: string,
-  ms = 15_000,
-): Promise<T> {
-  const end = Date.now() + ms;
-  for (;;) {
-    const v = await probe();
-    if (v !== undefined) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 50));
-  }
-}
+const envFor = (home: string, extra: Record<string, string> = {}) => ({
+  ...baseEnv(home, relay.url),
+  ...extra,
+});
+const connect = (home: string) => connectMcp(envFor(home), roomId, transports);
 
 function marker(label: string): string {
   const m = `${label}-${Math.random().toString(16).slice(2, 10)}`;
@@ -126,15 +72,6 @@ function expectStatusFramed(text: string): void {
   expect(text.indexOf(FRAME_REMINDER)).toBeGreaterThan(close);
 }
 
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 beforeAll(async () => {
   if (!existsSync(BIN)) {
     throw new Error(`build the CLI first: ${BIN} is missing`);
@@ -143,12 +80,18 @@ beforeAll(async () => {
   homeA = mkdtempSync(join(tmpdir(), "agentroom-conf-a-"));
   homeB = mkdtempSync(join(tmpdir(), "agentroom-conf-b-"));
 
-  const upOut = await cli(homeA, ["up", "--name", ALICE, "--agent", "codex"]);
+  const upOut = await cli(envFor(homeA), [
+    "up",
+    "--name",
+    ALICE,
+    "--agent",
+    "codex",
+  ]);
   const codeLine = upOut.split("\n").find((l) => l.startsWith("ar1_"));
   if (!codeLine) throw new Error(`no share code in up output:\n${upOut}`);
   code = codeLine.trim();
   ({ roomId, key } = deriveRoom(parseShareCode(code)));
-  const joinOut = await cli(homeB, [
+  const joinOut = await cli(envFor(homeB), [
     "join",
     code,
     "--name",
@@ -164,14 +107,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  const pids = transports.map((t) => t.pid).filter((p): p is number => !!p);
-  await alice?.close();
-  await bob?.close();
-  await until(
-    () => (pids.every((p) => !alive(p)) ? true : undefined),
-    "mcp children to exit",
-    10_000,
-  );
+  await closeAll([alice, bob], transports);
   await relay.close();
   rmSync(homeA, { recursive: true, force: true });
   rmSync(homeB, { recursive: true, force: true });
@@ -257,7 +193,100 @@ test("both sides resume after a forced disconnect and receive an injected messag
   }
 }, 40_000);
 
-test("the relay holds no plaintext, and every stored envelope is agent-tagged via mcp", async () => {
+/** Stand-in for a human `approve` from alice's CLI (say/approve need a real TTY). */
+async function humanApprove(thread: string): Promise<void> {
+  const id = `01APPROVE${Date.now()}`;
+  relay.inject(
+    roomId,
+    await seal(
+      {
+        v: 1,
+        id,
+        ts: Date.now(),
+        from: { member: ALICE, agent: "human", via: "cli" },
+        kind: "approve",
+        thread,
+        body: "",
+      },
+      key,
+      roomId,
+    ),
+  );
+}
+
+test("chain limit: bob's fourth agent message in a thread is refused until a human approves", async () => {
+  const q = await call(alice, "send", { kind: "question", body: marker("c1") });
+  const thread = q.structured.id as string;
+  await until(async () => {
+    const r = await call(bob, "inbox");
+    return r.text.includes(thread) ? r : undefined;
+  }, "bob sees q");
+  const a = await call(bob, "send", {
+    kind: "answer",
+    body: marker("c2"),
+    replyTo: thread,
+  });
+  expect(a.isError).toBe(false);
+  await until(async () => {
+    const r = await call(alice, "inbox");
+    return r.text.includes(thread) ? r : undefined;
+  }, "alice sees a");
+  const q2 = await call(alice, "send", {
+    kind: "question",
+    body: marker("c3"),
+    replyTo: a.structured.id,
+  });
+  expect(q2.isError).toBe(false);
+  const blocked = await until(async () => {
+    const r = await call(bob, "send", {
+      kind: "answer",
+      body: marker("c4"),
+      thread,
+    });
+    return r.isError ? r : undefined;
+  }, "bob refused");
+  expect(blocked.text).toContain(
+    "This thread needs a human. 3 agent messages in a row without a human reply.",
+  );
+  const head = relay.snapshot(roomId)?.seq;
+  await humanApprove(thread);
+  const ok = await until(async () => {
+    const r = await call(bob, "send", {
+      kind: "answer",
+      body: marker("c5"),
+      thread,
+    });
+    return r.isError ? undefined : r;
+  }, "bob allowed after approve");
+  expect(ok.structured.seq).toBeGreaterThan(head as number);
+  await call(alice, "inbox");
+  await call(bob, "inbox");
+}, 40_000);
+
+test("a fake AWS key over stdio is blocked naming the rule and never reaches the relay", async () => {
+  const fake = ["AKIA", "Z7Q2K4M6N3P5R2T4"].join("");
+  markers.push(fake);
+  const head = relay.snapshot(roomId)?.seq;
+  const r = await call(alice, "send", { kind: "fyi", body: `key ${fake}` });
+  expect(r.isError).toBe(true);
+  expect(r.text).toContain("aws-access-key-id");
+  expect(r.text).not.toContain(fake);
+  expect(relay.snapshot(roomId)?.seq).toBe(head);
+});
+
+test("agentroom say run with CLAUDECODE=1 exits non-zero naming the marker and posts nothing", async () => {
+  const head = relay.snapshot(roomId)?.seq;
+  const body = marker("say");
+  const err = await cli(envFor(homeA, { CLAUDECODE: "1" }), ["say", body]).then(
+    () => undefined,
+    (e: { code: number; stderr: string }) => e,
+  );
+  expect(err?.code).not.toBe(0);
+  expect(err?.stderr).toContain("CLAUDECODE is set");
+  expect(relay.snapshot(roomId)?.seq).toBe(head);
+});
+
+test("the relay holds no plaintext, and every stored envelope from the agents is agent-tagged via mcp", async () => {
   const snap = relay.snapshot(roomId);
   expect(snap).toBeDefined();
   if (!snap) return;
@@ -271,8 +300,20 @@ test("the relay holds no plaintext, and every stored envelope is agent-tagged vi
     for (const n of needles) expect(h).not.toContain(n);
   }
   expect(snap.buffer.length).toBeGreaterThanOrEqual(5);
+  const fromAgents: Envelope[] = [];
   for (const m of snap.buffer) {
     const env = await open(m.blob, key, roomId);
+    if (env.from.member === ALICE || env.from.member === BOB) {
+      fromAgents.push(env);
+    }
+  }
+  // The one human envelope is the approve this test injected for alice.
+  const human = fromAgents.filter((e) => e.kind === "approve");
+  expect(human).toHaveLength(1);
+  expect(human[0]?.from).toEqual({ member: ALICE, agent: "human", via: "cli" });
+  const agents = fromAgents.filter((e) => e.kind !== "approve");
+  expect(agents.length).toBeGreaterThanOrEqual(5);
+  for (const env of agents) {
     expect(env.from.via).toBe("mcp");
     expect(env.from.agent).not.toBe("human");
   }
