@@ -6,10 +6,11 @@ export const SNIPPET =
   "This project uses agentroom. At the start of each task and after finishing each step, call the `inbox` tool. When you are waiting on the other team, call `wait`.";
 
 function find(text: string): { start: number; end: number } | undefined {
-  const start = text.indexOf(START);
-  if (start < 0) return undefined;
-  const close = text.indexOf(END, start);
+  // Pair the end marker with the nearest start before it, so a stray start keeps the text after it.
+  const close = text.indexOf(END);
   if (close < 0) return undefined;
+  const start = text.lastIndexOf(START, close);
+  if (start < 0) return undefined;
   let end = close + END.length;
   if (text[end] === "\n") end++;
   return { start, end };

@@ -58,3 +58,10 @@ test("snippet: create, append, replace, idempotent, remove", () => {
 test("a non-object mcpServers is refused, not overwritten", () => {
   expect(() => setJsonEntry(`{"mcpServers": ["keep"]}\n`, F, entry)).toThrow(F);
 });
+
+test("a stray start marker does not swallow the user text after it", () => {
+  const text = "intro\n<!-- agentroom:start -->\nuser notes\n";
+  const once = upsertBlock(text);
+  expect(upsertBlock(once)).toBe(once);
+  expect(removeBlock(once)).toBe(text);
+});
