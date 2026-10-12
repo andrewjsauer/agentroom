@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "UserPromptExpansion": [
+      {
+        "matcher": "^(agentroom:)?(say|approve|send|sync-mode)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/agentroom.mjs",
+              "hook",
+              "prompt-expansion"
+            ],
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/agentroom.mjs",
+              "hook",
+              "prompt-submit"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

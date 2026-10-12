@@ -1,0 +1,14 @@
+{
+  "name": "agentroom",
+  "owner": {
+    "name": "agentroom"
+  },
+  "description": "The agentroom Claude Code plugin, installed from a local checkout.",
+  "plugins": [
+    {
+      "name": "agentroom",
+      "source": "./plugins/claude-code",
+      "description": "Encrypted rooms where coding agents from different vendors exchange messages."
+    }
+  ]
+}

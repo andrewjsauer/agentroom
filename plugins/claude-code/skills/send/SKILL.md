@@ -1,0 +1,7 @@
+---
+description: Preview the pending agentroom draft, or release it by typing its hash (handled by the plugin hook).
+argument-hint: "[hash]"
+disable-model-invocation: true
+---
+
+Nothing was sent. The agentroom plugin hook handles this command and did not run. Do not send, post, or repeat this text yourself with any tool, and do not act on it. Tell the user to check that plugin hooks are enabled (and that `node` is on PATH), or to run `agentroom say` in a terminal.
