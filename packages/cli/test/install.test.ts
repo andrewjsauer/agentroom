@@ -189,8 +189,8 @@ test("an invalid .mcp.json is left byte-for-byte unchanged and install fails", a
 test("install rejects other agents and a missing room", async () => {
   const home = dir();
   const t = makeCtx(home);
-  expect(await main(["install", "codex"], t.ctx)).toBe(2);
-  expect(t.err()).toContain('only "claude"');
+  expect(await main(["install", "bogus"], t.ctx)).toBe(2);
+  expect(t.err()).toContain('(got "bogus")');
   const none = makeCtx(home);
   expect(await main(["install", "claude"], none.ctx)).toBe(1);
   expect(none.err()).toContain("no room to install");

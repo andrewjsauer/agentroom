@@ -30,9 +30,9 @@ agentroom/
     relay-cf/      # Cloudflare Worker + Durable Object relay (milestone 4)
     mcp/           # stdio MCP server
     cli/           # up, join, down, status, say, approve, watch, export, install
+                   #   src/adapters/: codex, gemini, cursor config writers and the AGENTS.md/GEMINI.md snippet
   plugins/
     claude-code/   # plugin manifest, slash commands, hooks, status line script
-  adapters/        # per-agent config writers: claude, codex, gemini, cursor
   examples/        # two-agent demo, AGENTS.md / GEMINI.md snippets
   docs/
 ```

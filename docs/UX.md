@@ -108,6 +108,11 @@ The mode is per room, in `<room>/settings.json`, set by `/agentroom:sync-mode` o
 
 - `agentroom install codex|gemini|cursor` writes the MCP server entry into that agent's config and appends a short snippet to the repo's `AGENTS.md` or `GEMINI.md`:
   > This project uses agentroom. At the start of each task and after finishing each step, call the `inbox` tool. When you are waiting on the other team, call `wait`.
+- Files touched. User scope (the default): Codex `~/.codex/config.toml` (`$CODEX_HOME/config.toml` when set) `[mcp_servers.agentroom]`; Gemini CLI `~/.gemini/settings.json` `mcpServers.agentroom`; Cursor `~/.cursor/mcp.json` `mcpServers.agentroom` (with `type: "stdio"`). `--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo root (the nearest ancestor with `.git`) instead. The snippet always goes to the repo root's `AGENTS.md` (Codex, Cursor) or `GEMINI.md` (Gemini), between `<!-- agentroom:start -->` and `<!-- agentroom:end -->`.
+- The entry runs `agentroom mcp` with no `--room`, so it serves the current room and never names a room id; project files are safe to commit. Everything else in the files is kept, and running install twice changes nothing. A config agentroom cannot rewrite safely (invalid JSON, or an `agentroom` server defined as an inline table, dotted key or array of tables in TOML) aborts with the file named and nothing changed.
+- `up --agent X` and `join --agent X` run the user-scope install after the room is ready and print the files they changed; restart the agent to load the tools.
+- `agentroom uninstall codex|gemini|cursor [--project]` removes only the entry and the marker block, deletes a file left empty, and says "Nothing to remove" when nothing was installed.
+- The MCP server's `instructions` carry the room rules and the inbox/wait guidance, so these agents see them without a skill.
 - These agents receive messages when they check, not on push. Say so plainly in the README.
 
 ## Later: editor gutter

@@ -1,12 +1,27 @@
 import { spawnSync } from "node:child_process";
 import { findOnPath } from "@agentroom/mcp";
+import { isAdapterAgent, uninstallAdapter } from "../adapters/index.js";
 import { uninstallStatusLine } from "../claude-settings.js";
 import { type CliContext, CliError } from "../context.js";
 
-/** `agentroom uninstall claude`: restore the status line, then remove the plugin (KTD18). */
-export function uninstall(positionals: string[], ctx: CliContext): number {
-  if (positionals[0] !== "claude" || positionals.length > 1) {
-    throw new CliError('uninstall supports only "claude"', 2);
+/**
+ * `agentroom uninstall claude`: restore the status line, then remove the plugin (KTD18).
+ * `uninstall codex|gemini|cursor [--project]`: remove the MCP entry and the snippet block.
+ */
+export function uninstall(
+  positionals: string[],
+  values: Record<string, string | undefined>,
+  ctx: CliContext,
+): number {
+  const target = positionals[0];
+  if (isAdapterAgent(target) && positionals.length === 1) {
+    return uninstallAdapter(target, values.project ? "project" : "user", ctx);
+  }
+  if (target !== "claude" || positionals.length > 1 || values.project) {
+    throw new CliError(
+      "usage: agentroom uninstall claude | uninstall codex|gemini|cursor [--project]",
+      2,
+    );
   }
   ctx.stdout.write(`${uninstallStatusLine(ctx)}\n`);
   const claude = findOnPath(ctx.env.PATH, "claude");

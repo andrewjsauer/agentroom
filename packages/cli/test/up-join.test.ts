@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { readCurrent, readRoomFile, roomDir } from "@agentroom/mcp";
 import {
@@ -108,8 +108,11 @@ test("join writes room.json for the joiner with its own member and agent (no clo
   });
   expect(room.closeSecretKey).toBeUndefined();
   expect(b.out()).toContain(`Joined room ${roomId} as bob (codex)`);
-  expect(b.out()).toContain(`mcp --room ${roomId}`);
-  expect(b.out()).toContain("restart your agent session");
+  // Codex gets the user-scope adapter install (temp HOME), with no room id in the entry.
+  const codexConfig = joinPath(hB, ".codex", "config.toml");
+  expect(b.out()).toContain(`Updated ${codexConfig}`);
+  expect(b.out()).toContain("Restart Codex");
+  expect(readFileSync(codexConfig, "utf8")).not.toContain(roomId);
 });
 
 test("join on the creator's machine keeps the secret, close key and createdByMe", async () => {

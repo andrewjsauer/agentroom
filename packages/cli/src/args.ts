@@ -26,8 +26,13 @@ Commands:
       Follow every thread in this terminal and reply as yourself (needs an interactive terminal).
   install claude [--room <id>]
       Install the Claude Code plugin and status line (or register the MCP server / write .mcp.json).
+  install codex|gemini|cursor [--project]
+      Add the agentroom MCP server to that agent's config (user scope, or the repo's with --project)
+      and the inbox/wait note to the repo's AGENTS.md or GEMINI.md.
   uninstall claude
       Remove the Claude Code plugin and restore your previous status line.
+  uninstall codex|gemini|cursor [--project]
+      Remove the agentroom MCP server entry and the AGENTS.md/GEMINI.md note.
 
 Used by the Claude Code plugin:
   mcp [--room <id>]
@@ -70,11 +75,11 @@ const OPTIONS = {
     format: { type: "string" },
     room: { type: "string" },
   },
-  install: { room: { type: "string" } },
+  install: { room: { type: "string" }, project: { type: "boolean" } },
   mcp: { room: { type: "string" } },
   hook: {},
   watch: { room: { type: "string" } },
-  uninstall: {},
+  uninstall: { project: { type: "boolean" } },
   statusline: { chain: { type: "string" } },
   "sync-mode": { room: { type: "string" } },
 } satisfies Record<string, FlagSpec>;

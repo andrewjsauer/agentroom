@@ -4,6 +4,7 @@ import type { Client } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   type RoomSession,
+  RULES_TEXT,
   readStatus,
   WAIT_CANCELLED_TEXT,
 } from "../src/index.js";
@@ -58,6 +59,14 @@ afterEach(async () => {
 });
 
 const MSG_TAG = /<agentroom_message_[0-9a-f]{12} /;
+
+test("instructions carry the rules and the inbox/wait guidance (M4 R8)", () => {
+  const text = a.getInstructions() ?? "";
+  expect(text).toContain(RULES_TEXT);
+  expect(text).toContain(
+    "Call `inbox` at the start of each task and after each step; call `wait` when you are blocked on the other side.",
+  );
+});
 
 test("send returns id and seq; inbox on the other side is framed and marked read", async () => {
   const sent = await call(a, "send", { kind: "question", body: "ping-7f3a" });

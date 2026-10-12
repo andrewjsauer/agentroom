@@ -7,19 +7,21 @@ import {
   findOnPath,
   roomExists,
 } from "@agentroom/mcp";
+import { installAdapter, isAdapterAgent } from "../adapters/index.js";
 import { installStatusLine, isObject } from "../claude-settings.js";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
- * The stdio command an agent runs for this room (plan KTD15). From an installed package it is
+ * The stdio command an agent runs (plan KTD15). From an installed package it is
  * `npx -y agentroom`; from a checkout it is the absolute node binary plus the absolute entry file.
+ * Without a room id it serves the current room (M4 KTD4), so the entry never names a room.
  */
 export function mcpServerCommand(
   entryPath: string,
-  roomId: string,
+  roomId?: string,
   execPath = process.execPath,
 ): { command: string; args: string[] } {
-  const tail = ["mcp", "--room", roomId];
+  const tail = roomId ? ["mcp", "--room", roomId] : ["mcp"];
   if (entryPath.split(sep).includes("node_modules")) {
     return { command: "npx", args: ["-y", "agentroom", ...tail] };
   }
@@ -178,16 +180,24 @@ function installClaude(roomId: string, ctx: CliContext): number {
   return 0;
 }
 
-/** `agentroom install <agent> [--room <id>]`. */
+/** `agentroom install claude [--room <id>]` or `install codex|gemini|cursor [--project]`. */
 export function install(
   positionals: string[],
   values: Record<string, string | undefined>,
   ctx: CliContext,
 ): number {
   const target = positionals[0];
-  if (target !== "claude") {
+  if (isAdapterAgent(target) && positionals.length === 1) {
+    return installAdapter(
+      target,
+      values.project ? "project" : "user",
+      mcpServerCommand(ctx.entryPath),
+      ctx,
+    );
+  }
+  if (target !== "claude" || values.project) {
     throw new CliError(
-      `install supports only "claude" in this version${target ? ` (got "${target}")` : ""}`,
+      `usage: agentroom install claude [--room <id>] | install codex|gemini|cursor [--project]${target ? ` (got "${target}")` : ""}`,
       2,
     );
   }
@@ -200,13 +210,16 @@ export function install(
   return installClaude(roomId, ctx);
 }
 
-/** After `up` or `join` wrote the room: install for Claude Code, or tell the user the command. */
+/** After `up` or `join` wrote the room: install for the agent, or print the command for others. */
 export function afterRoomReady(
   roomId: string,
   agent: AgentName,
   ctx: CliContext,
 ): number {
   if (agent === "claude-code") return installClaude(roomId, ctx);
+  if (isAdapterAgent(agent)) {
+    return installAdapter(agent, "user", mcpServerCommand(ctx.entryPath), ctx);
+  }
   const { command, args } = mcpServerCommand(ctx.entryPath, roomId);
   ctx.stdout.write(
     `Add this stdio MCP server to your agent as "agentroom":\n  ${command} ${args.join(" ")}\nThen restart your agent session to load the tools.\n`,

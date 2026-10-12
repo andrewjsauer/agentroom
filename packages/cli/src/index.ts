@@ -60,7 +60,7 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
       case "statusline":
         return await statusline(parsed.values, ctx);
       case "uninstall":
-        return uninstall(parsed.positionals, ctx);
+        return uninstall(parsed.positionals, parsed.values, ctx);
       case "watch":
         return await watch(parsed.values, ctx);
       case "hook":

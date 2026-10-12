@@ -30,6 +30,7 @@ test("the stub lists the five tools and the rules prompt, and every tool answers
   }
   const prompts = (await client.listPrompts()).prompts.map((p) => p.name);
   expect(prompts).toEqual(["agentroom-rules"]);
+  expect(client.getInstructions()).toBe(NO_ROOM_TEXT);
   await client.close();
 });
 
