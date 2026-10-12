@@ -73,6 +73,7 @@ const OPTIONS = {
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
   hook: {},
+  statusline: { chain: { type: "string" } },
   "sync-mode": { room: { type: "string" } },
 } satisfies Record<string, FlagSpec>;
 
