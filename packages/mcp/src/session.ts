@@ -156,6 +156,8 @@ export function createRoomSession(opts: {
   let maxAgentChain = DEFAULT_MAX_AGENT_CHAIN;
   /** Settles once the latest welcome's meta is read and its backlog is in `history` (KTD14). */
   let ready: Promise<void> = Promise.resolve();
+  /** Room meta never changes, so it is decrypted once, on the first welcome. */
+  let metaRead: Promise<void> | undefined;
   let processedSeq = 0;
   let catchUp: { head: number; resolve(): void } | undefined;
   let closed = false;
@@ -188,19 +190,26 @@ export function createRoomSession(opts: {
   const unreadMessages = () =>
     history.filter((m) => unread.has(m.env.id)).sort((a, b) => a.seq - b.seq);
 
-  const status = (): RoomStatus => {
+  const counts = () => {
     const u = unreadMessages();
+    return {
+      connection: gone ? ("gone" as const) : client.state,
+      connections: gone ? 0 : connections,
+      unread: u.length,
+      needsYou: u.filter((m) => isNeedsYou(m.env)).length,
+    };
+  };
+
+  /** Full status for `room_status`; the only caller that pays for the chain scan. */
+  const status = (): RoomStatus => {
     const chain = chainState(ordered(), maxAgentChain);
     return {
       roomId,
       member: session.room.member,
       agent: session.room.agent,
       relay: session.room.relay,
-      connection: gone ? "gone" : client.state,
-      connections: gone ? 0 : connections,
+      ...counts(),
       membersSeen: [...members.values()],
-      unread: u.length,
-      needsYou: u.filter((m) => isNeedsYou(m.env)).length,
       decryptFailures,
       expiresAt,
       waitingOnHuman: waitingThreads(chain).map((w) => ({
@@ -213,13 +222,9 @@ export function createRoomSession(opts: {
 
   const persistStatus = () => {
     if (gone) return;
-    const s = status();
     writeStatus(home, roomId, {
-      connection: s.connection,
-      connections: s.connections,
-      members: s.membersSeen,
-      unread: s.unread,
-      needsYou: s.needsYou,
+      ...counts(),
+      members: [...members.values()],
       decryptFailures,
       expiresAt,
       lastSeq,
@@ -338,7 +343,7 @@ export function createRoomSession(opts: {
         catchUp = { head: w.seq, resolve };
       });
       settleCatchUp(false);
-      const meta = openMeta(w.meta, key, roomId).then(
+      metaRead ??= openMeta(w.meta, key, roomId).then(
         (m) => {
           maxAgentChain = m.maxAgentChain;
         },
@@ -349,7 +354,7 @@ export function createRoomSession(opts: {
           );
         },
       );
-      ready = Promise.all([meta, caughtUp]).then(() => {});
+      ready = Promise.all([metaRead, caughtUp]).then(() => {});
       connections = w.members;
       expiresAt = w.expiresAt;
       ttlMs = w.expiresAt - Date.now();
@@ -401,12 +406,16 @@ export function createRoomSession(opts: {
   });
 
   /** Gone check, thread resolution (KTD2), then the envelope with the non-human `from`. */
-  const build = (input: SendInput, via: "mcp" | "hook"): Envelope => {
+  const build = (
+    input: SendInput,
+    via: "mcp" | "hook",
+    hist: Envelope[],
+  ): Envelope => {
     if (gone) throw new Error(goneText());
     const id = ulid();
     const thread = resolveThread(
       { id, thread: input.thread, replyTo: input.replyTo },
-      ordered(),
+      hist,
     );
     return Envelope.parse({
       v: 1,
@@ -462,11 +471,9 @@ export function createRoomSession(opts: {
     send(input) {
       const run = async () => {
         await ready;
-        const env = build(input, "mcp");
-        const refusal = checkChain(
-          chainState(ordered(), maxAgentChain),
-          env.thread,
-        );
+        const hist = ordered();
+        const env = build(input, "mcp", hist);
+        const refusal = checkChain(chainState(hist, maxAgentChain), env.thread);
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
         return { id: env.id, seq };
@@ -476,7 +483,7 @@ export function createRoomSession(opts: {
       return result;
     },
     draft(input) {
-      const env = build(input, "hook");
+      const env = build(input, "hook", ordered());
       refuseHuman(env);
       assertNoSecrets(env);
       return { env, hash: writePending(home, roomId, env) };
