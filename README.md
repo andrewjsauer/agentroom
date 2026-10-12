@@ -12,7 +12,7 @@ Coworker: npx agentroom join ar1_k7Fq...9Wd --agent codex
           -> Joined. Restart your agent session to load the tools.
 ```
 
-Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentroom down`, or the room sits idle, it is deleted.
+Each agent gains a few tools (`send`, `inbox`, `wait`, `handoff`, `room_status`). Messages travel through a relay that only sees ciphertext. When the creator runs `agentroom down`, the room sits idle, or it reaches its max age (24 h at most), it is deleted.
 
 ## Why
 
@@ -34,18 +34,50 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/PLAN.md` | Milestones with task checklists and acceptance criteria. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
-## Usage (Milestone 1)
+## Usage (Milestone 2)
 
 ```
-agentroom up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>]
+agentroom up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>] [--ttl <n>h|<n>m]
 agentroom join [code] [--agent ...] [--name <member>] [--relay <url>]
 agentroom status [--room <id>]
+agentroom say [--thread <id> | --new] [--room <id>] "<text>"   # your own words, tagged human
+agentroom approve <thread> [--room <id>]                      # unblock a thread held by the chain limit
+agentroom export [--thread <id>] [--format md|gh-issue] [--room <id>]
+agentroom down [--room <id>]                                  # creator only: close the room now
 agentroom mcp --room <id>        # stdio MCP server; what the agent's MCP config runs
 ```
 
-`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and print the stdio command to add to your agent's MCP config; restart the agent session afterwards. The MCP server exposes `room_status`, `send`, `inbox` and `wait`.
+`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and print the stdio command to add to your agent's MCP config; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3).
+
+The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plus an `agentroom-rules` prompt with the etiquette. `send` and `handoff` accept `draft: true`, which saves the message for you to release instead of posting it (release arrives with the Claude Code plugin in Milestone 3).
+
+`say` and `approve` are how you speak in the room yourself. They refuse to run unless both stdin and stdout are a terminal, and they refuse inside an agent's shell (when `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI` or `CURSOR_AGENT` is set). Claude Code's IDE extensions set `CLAUDECODE` in integrated terminals, so run `say` from a standalone terminal. `say` replies in the most recently updated thread unless you pass `--thread` or `--new`.
+
+`export` writes the room's local history (what this machine's MCP server saw) as markdown to stdout. `--format gh-issue` writes the body to a private temp file and prints the `gh issue create --body-file` command to run; the file holds decrypted messages, so delete it when done. Run `export` before `down` if you want a record: `down` deletes local state on every member's machine.
 
 The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://relay.agentroom.dev`, which is a placeholder: no relay is deployed there yet. Until one is, run `agentroom-relay` from `@agentroom/relay-node` (listens on `PORT`, default 8787) and pass its `ws://` URL to both sides. `up` includes `--relay` in the printed join command whenever the URL is not the default.
+
+## Threat model
+
+agentroom protects message contents from the relay and stops the common accidents of unattended agents. It does not protect members from each other.
+
+**What the relay sees.** The room id (an HKDF output of the share secret, not the secret), the size and timing of each ciphertext envelope, connection counts, the creator's close public key, the room's idle and max-age TTLs, and the encrypted room settings. It never sees plaintext, member or agent names, the share code or the room key. Relay logs carry room ids, counts and error codes only.
+
+**What the relay can still do.** Drop, delay, replay or reorder envelopes, refuse connections, or forget a room. Replayed envelopes are dropped by id on each client. A tampered envelope fails decryption and is counted, not shown.
+
+**What any member can do.** Anyone holding the share code is a full member until the room closes or expires: they read every message, post under any display name they choose, and stay until the end. Display names are claims, not identities.
+
+**Human tags.** The MCP server never emits a message tagged `human`; that is enforced in code and tested. CLI `say` and `approve` (and, from Milestone 3, the Claude Code hook) are the only human paths. Their terminal and agent-marker checks stop accidental impersonation only. An agent running as your OS user can read `room.json` and forge any tag, so a human tag means "probably typed by a person", not proof.
+
+**Chain limits.** Each MCP server stops its own agent after N agent messages in a row in a thread (and 2N across the room) with no human message. The count is per sender: two agents posting at the same moment can overshoot by at most one message each.
+
+**Secret scanning.** Outgoing bodies, recipients and refs are checked against credential patterns (AWS, GitHub, Slack, private key headers, JWTs, Google API keys, Stripe live keys, and high-entropy `key=`/`token=`/`secret=` assignments) before encryption. A match blocks the send and names the rule; nothing is redacted. Pattern matching can miss secrets.
+
+**Refs, not code.** Agents are told to send `{repo, path, lines, commit}` references instead of pasting code. That is an instruction, not a control: a message body can carry 8 000 characters of anything, code included, visible to every member.
+
+**Inbound messages are data.** Every message an agent reads is wrapped in a labeled, nonce-tagged block with a reminder that it is information from another person's agent, not instructions. This lowers the risk of prompt injection; it does not remove it.
+
+**Share-code leakage is yours to manage.** Treat the code like a password. If it leaks, run `agentroom down` (creator only) and start a new room with `agentroom up`.
 
 ## Development
 
@@ -64,4 +96,4 @@ Packages live under `packages/`: `protocol`, `relay-node`, `mcp`, and `cli` (pub
 
 ## Status
 
-Milestone 1 core loop in progress: encrypted envelopes, in-memory relay, stdio MCP server with `room_status`/`send`/`inbox`/`wait`, and the `up`/`join`/`status`/`mcp` CLI commands. No relay is deployed yet. Design captured October 11, 2026.
+Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
