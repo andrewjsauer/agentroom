@@ -198,7 +198,9 @@ test("rate_limited reaches onError and the connection stays live", async () => {
   await c.put("AAAA");
   await c.put("BBBB");
   await until(() => errors.length === 1);
-  expect(errors).toEqual(["rate_limited"]);
+  await c.put("CCCC");
+  await until(() => errors.length === 2);
+  expect(errors).toEqual(["rate_limited", "rate_limited"]);
   expect(c.state).toBe("live");
 });
 
