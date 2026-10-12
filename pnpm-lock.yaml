@@ -24,7 +24,18 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@20.19.43)
 
-  packages/cli: {}
+  packages/cli:
+    dependencies:
+      '@agentroom/mcp':
+        specifier: workspace:*
+        version: link:../mcp
+      '@agentroom/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@agentroom/relay-node':
+        specifier: workspace:*
+        version: link:../relay-node
 
   packages/mcp:
     dependencies:

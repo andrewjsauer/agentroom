@@ -34,6 +34,19 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/PLAN.md` | Milestones with task checklists and acceptance criteria. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
+## Usage (Milestone 1)
+
+```
+agentroom up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>]
+agentroom join [code] [--agent ...] [--name <member>] [--relay <url>]
+agentroom status [--room <id>]
+agentroom mcp --room <id>        # stdio MCP server; what the agent's MCP config runs
+```
+
+`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and print the stdio command to add to your agent's MCP config; restart the agent session afterwards. The MCP server exposes `room_status`, `send`, `inbox` and `wait`.
+
+The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://relay.agentroom.dev`, which is a placeholder: no relay is deployed there yet. Until one is, run `agentroom-relay` from `@agentroom/relay-node` (listens on `PORT`, default 8787) and pass its `ws://` URL to both sides. `up` includes `--relay` in the printed join command whenever the URL is not the default.
+
 ## Development
 
 Requires Node 20.19 or newer and pnpm 10 (the exact version is pinned in `package.json` under `packageManager`; `corepack enable` picks it up).
@@ -51,4 +64,4 @@ Packages live under `packages/`: `protocol`, `relay-node`, `mcp`, and `cli` (pub
 
 ## Status
 
-Workspace scaffold (Milestone 0): four skeleton packages with build, typecheck, lint, test, and CI. No product behavior yet. Design captured October 11, 2026.
+Milestone 1 core loop in progress: encrypted envelopes, in-memory relay, stdio MCP server with `room_status`/`send`/`inbox`/`wait`, and the `up`/`join`/`status`/`mcp` CLI commands. No relay is deployed yet. Design captured October 11, 2026.
