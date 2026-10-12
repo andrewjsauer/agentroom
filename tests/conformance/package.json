@@ -1,0 +1,21 @@
+{
+  "name": "@agentroom/conformance",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@agentroom/mcp": "workspace:*",
+    "@agentroom/protocol": "workspace:*",
+    "@agentroom/relay-node": "workspace:*",
+    "@modelcontextprotocol/client": "^2.3.1",
+    "agentroom": "workspace:*"
+  }
+}

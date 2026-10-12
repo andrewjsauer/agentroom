@@ -84,6 +84,24 @@ importers:
         specifier: ^8.18.1
         version: 8.18.2
 
+  tests/conformance:
+    devDependencies:
+      '@agentroom/mcp':
+        specifier: workspace:*
+        version: link:../../packages/mcp
+      '@agentroom/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@agentroom/relay-node':
+        specifier: workspace:*
+        version: link:../../packages/relay-node
+      '@modelcontextprotocol/client':
+        specifier: ^2.3.1
+        version: 2.3.1
+      agentroom:
+        specifier: workspace:*
+        version: link:../../packages/cli
+
 packages:
 
   '@biomejs/biome@2.5.15':
