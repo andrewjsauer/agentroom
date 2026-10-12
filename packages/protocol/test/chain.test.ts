@@ -107,19 +107,22 @@ describe("chain limit", () => {
     ]);
   });
 
-  test("history must be seq-ordered; sorting an out-of-order input gives the same result", () => {
+  test("history must be seq-ordered: arrival order changes the count, sorting by seq restores it", () => {
     const ordered = [env("T"), env("T"), env("T", { human: true }), env("T")];
     const seqs = new Map(ordered.map((e, i) => [e.id, i]));
     const shuffled = [
+      ordered[2],
       ordered[3],
       ordered[0],
-      ordered[2],
       ordered[1],
     ] as Envelope[];
+    const want = chainState(ordered, 3);
+    expect(want.threads.get("T")).toBe(1);
+    expect(chainState(shuffled, 3)).not.toEqual(want);
     const sorted = [...shuffled].sort(
       (a, b) => (seqs.get(a.id) as number) - (seqs.get(b.id) as number),
     );
-    expect(chainState(sorted, 3)).toEqual(chainState(ordered, 3));
+    expect(chainState(sorted, 3)).toEqual(want);
   });
 
   test("refusal texts carry the ARCHITECTURE sentence and the CLI line", () => {
