@@ -17,3 +17,6 @@ build-logs/
 .DS_Store
 .idea/
 .vscode/
+
+# Wrangler local state
+.wrangler/

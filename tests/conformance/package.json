@@ -16,6 +16,9 @@
     "@agentroom/protocol": "workspace:*",
     "@agentroom/relay-node": "workspace:*",
     "@modelcontextprotocol/client": "^2.3.1",
-    "agentroom": "workspace:*"
+    "@types/ws": "^8.18.1",
+    "agentroom": "workspace:*",
+    "wrangler": "4.149.0",
+    "ws": "^8.22.0"
   }
 }

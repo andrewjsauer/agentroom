@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agentroom-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-12",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "vars": {
+    "IDLE_TTL_SEC": "28800",
+    "MAX_AGE_SEC": "86400",
+    "BUFFER_SIZE": "500",
+    "MAX_MEMBERS": "8",
+    "MAX_CLOSERS": "2",
+    "RATE_BURST": "20",
+    "RATE_PER_SEC": "2",
+    "CLOSE_GRACE_MS": "10000"
+  }
+}
