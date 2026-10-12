@@ -88,7 +88,10 @@ export function installStatusLine(ctx: CliContext): string | undefined {
   if (file === undefined) return undefined;
   const settings = readSettings(file);
   const state = readState(ctx);
-  const original = isOurs(settings.statusLine, ctx, state)
+  const ours = isOurs(settings.statusLine, ctx, state);
+  // Ours but the saved original is gone: keep the line, whose --chain still holds it.
+  if (ours && state === undefined) return file;
+  const original = ours
     ? (state?.original ?? null)
     : isObject(settings.statusLine)
       ? settings.statusLine

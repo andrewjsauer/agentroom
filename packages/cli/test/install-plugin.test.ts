@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -120,6 +121,22 @@ test("with claude and a checkout: mcp remove, then plugin install from the repo-
   expect(t.out()).toContain(
     "Restart Claude Code to load the agentroom plugin (or run /reload-plugins), then type /agentroom:sync.",
   );
+});
+
+test("install with the saved state gone keeps the chained status line as is", async () => {
+  const s = setup();
+  writeFileSync(
+    s.settingsFile,
+    JSON.stringify({
+      statusLine: { type: "command", command: "~/bin/my-line" },
+    }),
+  );
+  expect(await main(["install", "claude"], s.ctx().ctx)).toBe(0);
+  const installed = readFileSync(s.settingsFile, "utf8");
+  unlinkSync(s.state());
+  expect(await main(["install", "claude"], s.ctx().ctx)).toBe(0);
+  expect(readFileSync(s.settingsFile, "utf8")).toBe(installed);
+  expect(s.settings().statusLine.command).toContain("--chain '~/bin/my-line'");
 });
 
 test("AE6: install twice chains the original; uninstall restores it exactly", async () => {
