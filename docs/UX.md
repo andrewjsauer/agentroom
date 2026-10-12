@@ -16,13 +16,13 @@ agentroom join [code] [--agent ...] [--name ...]   # prompts for the code if omi
 agentroom down                     # creator only: close the room now
 agentroom status
 agentroom watch                    # terminal chat pane (works with any agent)
-agentroom say [--thread id] "<text>"   # human message; requires an interactive terminal (TTY)
+agentroom say [--thread id | --new] "<text>"   # human message; requires an interactive terminal (TTY)
 agentroom approve <thread>         # human approval; resets the chain limit; requires TTY
 agentroom export [--thread id] [--format md|gh-issue]
 agentroom install <agent>          # write MCP config (and plugin, for Claude Code)
 ```
 
-Every command acts on the room named in `~/.agentroom/current` (set by the last `up` or `join`) unless `--room <id>` is given. `say` without `--thread` replies to the most recently updated thread, which is almost always the one waiting on you; pass `--thread` to pick another or `--new` to start one.
+Every command acts on the room named in `~/.agentroom/current` (set by the last `up` or `join`) unless `--room <id>` is given. `say` without `--thread` replies to the most recently updated thread, which is almost always the one waiting on you; pass `--thread` to pick another or `--new` to start one. A reply is posted as kind `answer` with `replyTo` set to the latest message in that thread; `--new` (or a room with no messages yet) posts kind `question` and starts a thread whose id is the message id. `--thread` must name a known thread. History comes from the relay's replay merged with the local queue, so `say` works with no MCP server running. `say` and `approve` print the thread id they used (stripped of control characters and escape sequences, since thread ids are peer-chosen). They are the only CLI commands that post `from.agent = "human"`, always with `via: "cli"`, and both refuse when an agent marker is set or stdin or stdout is not a terminal.
 
 `up` and `join` call `install` for the named agent, then print what to restart.
 
@@ -56,7 +56,7 @@ The agent has a shell. If human messages were sent by running `agentroom say`, t
 
 - `/say`, `/approve` and `/send` are plugin commands, and the plugin's `UserPromptExpansion` hook (which fires when a typed command is about to expand, matched on the command name) posts what you typed tagged `via: "hook"`, `agent: "human"`, then blocks the expansion so nothing reaches the model (saves tokens too). The `UserPromptSubmit` hook is used for `between` delivery, not for `/say`. Verified 2026-10-12, `OPEN_QUESTIONS.md` item 7; the hook sees `command_args` exactly as typed.
 - Draft approvals for `/ask` and `/handoff` work the same way. Claude calls `send` or `handoff` with `draft: true`; the MCP server writes the envelope to the room's `pending.json` and returns the draft text plus a short hash, which Claude shows you. Your reply of `/send <hash>` (typed by you, caught by the hook) posts the pending envelope only if its hash still matches, so the agent cannot swap the content after you read it. The released message keeps the agent's `from.agent` with `via: "hook"`; it is never tagged human. The hook then posts a human `approve` for that thread, because you read and released it. Drafts skip the chain limit for that reason: nothing is posted without you. `pending.json` holds one draft; a new draft replaces it, and its hash is the first 12 hex characters of sha256 over the stored envelope.
-- The CLI `say` and `approve` commands (and the `watch` input line) refuse to run without an interactive terminal or when an agent environment marker such as `CLAUDECODE` is set. Weaker: an agent with a shell can deliberately get around this, so it stops accidental impersonation, not a determined agent (see the threat model in `ARCHITECTURE.md`). It covers non-Claude users, and the `watch` pane is the preferred human input path for them.
+- The CLI `say` and `approve` commands (and the `watch` input line) refuse to run without an interactive terminal or when an agent environment marker (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI` or `CURSOR_AGENT`; see `OPEN_QUESTIONS.md` item 17) is set. Weaker: an agent with a shell can deliberately get around this, so it stops accidental impersonation, not a determined agent (see the threat model in `ARCHITECTURE.md`). It covers non-Claude users, and the `watch` pane is the preferred human input path for them.
 
 Verified (`OPEN_QUESTIONS.md` items 6 and 7): `UserPromptSubmit` can block a prompt and inject context; `UserPromptExpansion` can block a plugin command before it expands.
 

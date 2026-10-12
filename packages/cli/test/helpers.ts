@@ -49,6 +49,7 @@ export function makeCtx(
     stderr: err.stream,
     stdin,
     isTTY: overrides.isTTY ?? false,
+    stdoutIsTTY: overrides.stdoutIsTTY ?? false,
     entryPath:
       overrides.entryPath ?? "/opt/agentroom-checkout/packages/cli/dist/bin.js",
   };

@@ -1,4 +1,12 @@
-import { type AgentName, agentroomHome, readCurrent } from "@agentroom/mcp";
+import {
+  type AgentName,
+  agentroomHome,
+  clearCurrentIf,
+  deleteRoomDir,
+  type RoomFile,
+  readCurrent,
+  readRoomFile,
+} from "@agentroom/mcp";
 import { RoomId } from "@agentroom/protocol";
 
 /** Everything a command touches in the process, injected so tests never hit the real environment. */
@@ -8,7 +16,10 @@ export interface CliContext {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
   stdin: NodeJS.ReadableStream;
+  /** stdin is a TTY. */
   isTTY: boolean;
+  /** stdout is a TTY. */
+  stdoutIsTTY: boolean;
   /** Absolute path of the running entry file (dist/bin.js). */
   entryPath: string;
 }
@@ -55,4 +66,33 @@ export function resolveRoomId(
     return flag;
   }
   return readCurrent(agentroomHome(ctx.env));
+}
+
+/** The resolved room and its room.json; a clear error when there is none. */
+export function loadRoom(
+  flag: string | undefined,
+  ctx: CliContext,
+): { roomId: string; room: RoomFile } {
+  const roomId = resolveRoomId(flag, ctx);
+  if (roomId !== undefined) {
+    try {
+      return { roomId, room: readRoomFile(agentroomHome(ctx.env), roomId) };
+    } catch {
+      // Fall through to the no-room error.
+    }
+  }
+  throw new CliError(
+    "No current room. Run `agentroom up` or `agentroom join <code>`.",
+  );
+}
+
+/** Delete local state for a room the relay no longer has and return the text to show. */
+export function forgetGoneRoom(
+  home: string,
+  roomId: string,
+  relay: string,
+): string {
+  deleteRoomDir(home, roomId);
+  clearCurrentIf(home, roomId);
+  return `Room ${roomId} has expired or no longer exists on ${relay} (it may have restarted); local state removed. Run \`agentroom up\` to start a new room.`;
 }

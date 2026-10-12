@@ -9,6 +9,7 @@ const code = await main(process.argv.slice(2), {
   stderr: process.stderr,
   stdin: process.stdin,
   isTTY: process.stdin.isTTY === true,
+  stdoutIsTTY: process.stdout.isTTY === true,
   entryPath: fileURLToPath(import.meta.url),
 });
 process.exitCode = code;

@@ -1,13 +1,11 @@
 import {
   agentroomHome,
-  clearCurrentIf,
-  deleteRoomDir,
   oneShot,
   type RoomFile,
   readRoomFile,
   readStatus,
 } from "@agentroom/mcp";
-import { type CliContext, resolveRoomId } from "../context.js";
+import { type CliContext, forgetGoneRoom, resolveRoomId } from "../context.js";
 
 export async function status(
   values: Record<string, string | undefined>,
@@ -36,11 +34,7 @@ export async function status(
   });
   if (res.t === "error") {
     if (res.code === "room_not_found" || res.code === "room_expired") {
-      deleteRoomDir(home, roomId);
-      clearCurrentIf(home, roomId);
-      ctx.stdout.write(
-        `Room ${roomId} has expired or no longer exists on ${room.relay} (it may have restarted); local state removed. Run \`agentroom up\` to start a new room.\n`,
-      );
+      ctx.stdout.write(`${forgetGoneRoom(home, roomId, room.relay)}\n`);
       return 1;
     }
     ctx.stderr.write(`relay error ${res.code}: ${res.message}\n`);

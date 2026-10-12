@@ -1,7 +1,9 @@
 import { parseCli, USAGE } from "./args.js";
+import { approve } from "./commands/approve.js";
 import { install } from "./commands/install.js";
 import { join } from "./commands/join.js";
 import { mcp } from "./commands/mcp.js";
+import { say } from "./commands/say.js";
 import { status } from "./commands/status.js";
 import { up } from "./commands/up.js";
 import { type CliContext, CliError } from "./context.js";
@@ -34,6 +36,10 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return await join(parsed.positionals, parsed.values, ctx);
       case "status":
         return await status(parsed.values, ctx);
+      case "say":
+        return await say(parsed.positionals, parsed.values, ctx);
+      case "approve":
+        return await approve(parsed.positionals, parsed.values, ctx);
       case "install":
         return install(parsed.positionals, parsed.values, ctx);
       case "mcp":
