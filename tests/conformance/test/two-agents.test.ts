@@ -180,9 +180,7 @@ afterAll(async () => {
 test("two agents see each other in room_status", async () => {
   const sees = (client: Client, other: string) => async () => {
     const r = await call(client, "room_status");
-    const members = r.structured.membersSeen as { member: string }[];
-    return members.some((m) => m.member === other) &&
-      r.structured.connections === 2
+    return r.text.includes(`- ${other}/`) && r.structured.connections === 2
       ? r
       : undefined;
   };

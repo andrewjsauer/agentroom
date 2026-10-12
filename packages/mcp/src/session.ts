@@ -1,17 +1,25 @@
 import {
+  chainRefusalText,
+  chainState,
+  checkChain,
   deriveRoom,
   Envelope,
+  type ErrorCode,
   frameInbound,
   open,
+  openMeta,
   parseShareCode,
   type Ref,
+  resolveThread,
   seal,
   stripControl,
   ulid,
+  waitingThreads,
 } from "@agentroom/protocol";
 import { agentroomHome } from "./paths.js";
 import {
   type ConnectionState,
+  type GoneCode,
   RelayClient,
   type RelayClientOptions,
 } from "./relay-client.js";
@@ -24,17 +32,28 @@ import {
   type RoomFile,
   readRoomFile,
   replayQueue,
-  type StoredMessage,
   writeStatus,
 } from "./state.js";
 
 export const ROOM_EXPIRED_TEXT =
   "This room has expired or no longer exists on the relay (it may have restarted). Run `agentroom up` to start a new room.";
+export const ROOM_CLOSED_TEXT =
+  "The room was closed by its creator. Run `agentroom up` to start a new room.";
 export const WAIT_CANCELLED_TEXT = "Wait cancelled; nothing was marked read.";
 
 const ECHO_TIMEOUT_MS = 10_000;
 const DEFAULT_LIMIT = 20;
 const MAX_NAME_CHARS = 64;
+const DEFAULT_MAX_AGENT_CHAIN = 3;
+
+/** Non-terminal relay errors fail the oldest in-flight send with these texts (KTD13). */
+const RELAY_ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
+  rate_limited:
+    "The relay rate-limited this connection; wait a few seconds and send again.",
+  too_large: "The relay refused the message as too large (64 KiB limit).",
+  room_full:
+    "The room is full (connection cap reached); the server keeps retrying.",
+};
 
 export type SendKind = "question" | "answer" | "decision" | "handoff" | "fyi";
 
@@ -67,6 +86,10 @@ export interface RoomStatus {
   needsYou: number;
   decryptFailures: number;
   expiresAt: number | null;
+  /** Threads at or over the chain limit; thread ids are peer-chosen and untrusted. */
+  waitingOnHuman: { thread: string; count: number }[];
+  /** Consecutive agent messages across threads, against the room-wide limit (2N). */
+  roomAgentRun: { count: number; limit: number };
 }
 
 /** The only `from` this server ever emits (invariant 2): the room's configured agent, via mcp. */
@@ -82,9 +105,6 @@ function buildFrom(room: RoomFile): {
 function sanitizeName(s: string): string {
   return stripControl(s).slice(0, MAX_NAME_CHARS);
 }
-
-/** M1 send policy: allow everything. M2 adds the chain limit and secret scanner here. */
-function sendPolicy(_env: Envelope, _history: StoredMessage[]): void {}
 
 export interface RoomSession {
   readonly roomId: string;
@@ -119,6 +139,9 @@ export function createRoomSession(opts: {
   let expiresAt: number | null = null;
   let ttlMs = 0;
   let gone = false;
+  let goneCode: GoneCode = "room_expired";
+  let maxAgentChain = DEFAULT_MAX_AGENT_CHAIN;
+  let metaReady: Promise<void> = Promise.resolve();
   let closed = false;
   let finalReadDone = false;
   let presenceSent = false;
@@ -131,22 +154,27 @@ export function createRoomSession(opts: {
 
   const noteMember = (env: Envelope) => {
     const member = sanitizeName(env.from.member);
-    members.set(member, {
-      member,
-      agent: sanitizeName(env.from.agent),
-      lastSeen: env.ts,
-    });
+    const agent = sanitizeName(env.from.agent);
+    members.set(`${member}/${agent}`, { member, agent, lastSeen: env.ts });
   };
   for (const m of history) noteMember(m.env);
 
   const isNeedsYou = (env: Envelope) =>
     env.requiresHuman || env.to === session.room.member;
 
+  const goneText = () =>
+    goneCode === "closed" ? ROOM_CLOSED_TEXT : ROOM_EXPIRED_TEXT;
+
+  /** History in relay seq order: live arrivals and replayed lines can interleave. */
+  const ordered = () =>
+    [...history].sort((a, b) => a.seq - b.seq).map((m) => m.env);
+
   const unreadMessages = () =>
     history.filter((m) => unread.has(m.env.id)).sort((a, b) => a.seq - b.seq);
 
   const status = (): RoomStatus => {
     const u = unreadMessages();
+    const chain = chainState(ordered(), maxAgentChain);
     return {
       roomId,
       member: session.room.member,
@@ -159,6 +187,11 @@ export function createRoomSession(opts: {
       needsYou: u.filter((m) => isNeedsYou(m.env)).length,
       decryptFailures,
       expiresAt,
+      waitingOnHuman: waitingThreads(chain).map((w) => ({
+        thread: sanitizeName(w.thread),
+        count: w.count,
+      })),
+      roomAgentRun: { count: chain.room, limit: 2 * maxAgentChain },
     };
   };
 
@@ -251,15 +284,25 @@ export function createRoomSession(opts: {
     persistStatus();
   };
 
-  const onGone = () => {
+  const onGone = (code: GoneCode) => {
     gone = true;
+    goneCode = code;
     client.stop();
     deleteRoomDir(home, roomId);
     clearCurrentIf(home, roomId);
-    for (const p of pendingEcho.values())
-      p.reject(new Error(ROOM_EXPIRED_TEXT));
+    for (const p of pendingEcho.values()) p.reject(new Error(goneText()));
     pendingEcho.clear();
     wake();
+  };
+
+  /** Fail the oldest in-flight send (sends are serialized, so it caused the error). */
+  const onError = (code: ErrorCode) => {
+    const text = RELAY_ERROR_TEXT[code];
+    const oldest = pendingEcho.entries().next();
+    if (text === undefined || oldest.done) return;
+    const [id, p] = oldest.value;
+    pendingEcho.delete(id);
+    p.reject(new Error(text));
   };
 
   const client = new RelayClient({
@@ -268,6 +311,17 @@ export function createRoomSession(opts: {
     initialSince: 0,
     backoff: opts.backoff,
     onWelcome: (w) => {
+      metaReady = openMeta(w.meta, key, roomId).then(
+        (m) => {
+          maxAgentChain = m.maxAgentChain;
+        },
+        () => {
+          decryptFailures++;
+          process.stderr.write(
+            "agentroom: room settings did not decrypt; using the default chain limit\n",
+          );
+        },
+      );
       connections = w.members;
       expiresAt = w.expiresAt;
       ttlMs = w.expiresAt - Date.now();
@@ -286,7 +340,7 @@ export function createRoomSession(opts: {
             body: "",
           }),
         ).catch((err: Error) => {
-          if (!closed) {
+          if (!closed && !gone) {
             process.stderr.write(
               `agentroom: presence not sent: ${err.message}\n`,
             );
@@ -295,18 +349,23 @@ export function createRoomSession(opts: {
       }
     },
     onMsg: (seq, blob) => {
-      void onMsg(seq, blob);
+      onMsg(seq, blob).catch((err: Error) => {
+        process.stderr.write(
+          `agentroom: inbound message not processed: ${err.message}\n`,
+        );
+      });
     },
     onPresence: (n) => {
       connections = n;
       persistStatus();
     },
     onGone,
+    onError,
     onState: () => persistStatus(),
   });
 
   const inbox = (o: { thread?: string; limit?: number } = {}): string => {
-    if (gone && finalReadDone) return ROOM_EXPIRED_TEXT;
+    if (gone && finalReadDone) return goneText();
     const all = unreadMessages().filter(
       (m) => o.thread === undefined || m.env.thread === o.thread,
     );
@@ -328,7 +387,7 @@ export function createRoomSession(opts: {
     }
     if (gone) {
       finalReadDone = true;
-      parts.push(ROOM_EXPIRED_TEXT);
+      parts.push(goneText());
     }
     return parts.join("\n");
   };
@@ -343,13 +402,14 @@ export function createRoomSession(opts: {
     inbox,
     send(input) {
       const run = async () => {
-        if (gone) throw new Error(ROOM_EXPIRED_TEXT);
+        if (gone) throw new Error(goneText());
+        await metaReady;
         const id = ulid();
-        const parent = input.replyTo
-          ? history.find((m) => m.env.id === input.replyTo)
-          : undefined;
-        const thread =
-          input.thread ?? parent?.env.thread ?? input.replyTo ?? id;
+        const past = ordered();
+        const thread = resolveThread(
+          { id, thread: input.thread, replyTo: input.replyTo },
+          past,
+        );
         const env = Envelope.parse({
           v: 1,
           id,
@@ -363,7 +423,8 @@ export function createRoomSession(opts: {
           refs: input.refs ?? [],
           requiresHuman: input.requiresHuman ?? false,
         });
-        sendPolicy(env, history);
+        const refusal = checkChain(chainState(past, maxAgentChain), thread);
+        if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
         return { id, seq };
       };

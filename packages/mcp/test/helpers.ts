@@ -1,11 +1,21 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deriveRoom, generateShareCode, sealMeta } from "@agentroom/protocol";
+import {
+  deriveRoom,
+  type EnvelopeKind,
+  generateCloseKeyPair,
+  generateShareCode,
+  seal,
+  sealMeta,
+  signClose,
+  ulid,
+} from "@agentroom/protocol";
 import type { RelayHandle } from "@agentroom/relay-node";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   type AgentName,
+  connectOnce,
   createMcpServer,
   createRoomSession,
   oneShot,
@@ -18,24 +28,67 @@ export interface TestRoom {
   code: string;
   roomId: string;
   key: Uint8Array;
+  closeSecretKey: string;
 }
 
 /** Generate a share code and create the room on the relay. */
-export async function createTestRoom(relay: RelayHandle): Promise<TestRoom> {
+export async function createTestRoom(
+  relay: RelayHandle,
+  settings: { maxAgentChain?: number } = {},
+): Promise<TestRoom> {
   const { code, secret } = generateShareCode();
   const { roomId, key } = deriveRoom(secret);
-  const meta = await sealMeta({}, key, roomId);
+  const meta = await sealMeta(settings, key, roomId);
+  const close = await generateCloseKeyPair();
   const res = await oneShot({
     url: relay.url,
     hello: {
       t: "hello",
       room: roomId,
       proto: 1,
-      create: { closeKey: "pk", meta },
+      create: { closeKey: close.publicKey, meta },
     },
   });
   if (res.t !== "welcome") throw new Error(`create failed: ${res.code}`);
-  return { code, roomId, key };
+  return { code, roomId, key, closeSecretKey: close.secretKey };
+}
+
+/** Stand-in for CLI `say`/`approve`: a human-tagged envelope sealed with the room key. */
+export async function injectHuman(
+  relay: RelayHandle,
+  room: TestRoom,
+  opts: { kind: EnvelopeKind; thread: string; body?: string; member?: string },
+): Promise<string> {
+  const id = ulid();
+  const blob = await seal(
+    {
+      v: 1,
+      id,
+      ts: Date.now(),
+      from: { member: opts.member ?? "alice", agent: "human", via: "cli" },
+      kind: opts.kind,
+      thread: opts.thread,
+      body: opts.body ?? "",
+    },
+    room.key,
+    room.roomId,
+  );
+  relay.inject(room.roomId, blob);
+  return id;
+}
+
+/** Close the room as its creator over a close-only connection. */
+export async function closeTestRoom(
+  relay: RelayHandle,
+  room: TestRoom,
+): Promise<void> {
+  const once = await connectOnce({
+    url: relay.url,
+    hello: { t: "hello", room: room.roomId, proto: 1, closeOnly: true },
+  });
+  await once.close(
+    await signClose(room.closeSecretKey, room.roomId, once.welcome.nonce),
+  );
 }
 
 export function makeHome(): string {

@@ -191,16 +191,13 @@ test("room_status shows members, connections, unread, expiry and decrypt failure
     needsYou: number;
     decryptFailures: number;
     expiresAt: number;
-    membersSeen: { member: string; agent: string }[];
   };
   expect(st.connections).toBe(2);
   expect(st.unread).toBe(1);
   expect(st.needsYou).toBe(1);
   expect(st.decryptFailures).toBe(0);
   expect(st.expiresAt).toBeGreaterThan(Date.now());
-  expect(st.membersSeen).toContainEqual(
-    expect.objectContaining({ member: "bob", agent: "gemini" }),
-  );
+  expect(s.structured).not.toHaveProperty("membersSeen");
   expect(s.text).toContain("- bob/gemini");
   expect(s.text).toContain(FRAME_REMINDER);
 
@@ -240,10 +237,9 @@ test("room_status sanitizes peer-supplied member names and keeps them in the lab
   );
 
   const s = await call(a, "room_status");
-  const members = (
-    s.structured as { membersSeen: { member: string; agent: string }[] }
-  ).membersSeen;
-  const seen = members.find((m) => m.member.startsWith("evil"));
+  const seen = alice
+    .status()
+    .membersSeen.find((m) => m.member.startsWith("evil"));
   expect(seen).toBeDefined();
   expect(seen?.member).not.toMatch(/[\r\n]/);
   expect(seen?.member.length).toBe(64);
