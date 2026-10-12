@@ -22,7 +22,7 @@ Every Agent tool call must pass `model: "opus"` (Claude Opus 5.5). Never launch 
    a. `compound-engineering:ce-plan` for that milestone (plan files go in `docs/plans/`).
    b. Build subagent, then simplify subagent, then review subagent.
    c. Verify the milestone's agent-checkable acceptance criteria yourself: `pnpm -r build && pnpm -r test`, typecheck, lint. Tick the checkboxes in `docs/PLAN.md`. Do not start the next milestone until this passes.
-4. Target for this run: M0, M1, then M2. Stop after M2, or earlier if the budget runs low. Finish the current task and commit rather than leaving work half-done.
+4. Target: finish M2, then M3, then the agent-doable parts of M4 (adapters, README, relay-cf with its conformance suite; not npm publish or any deploy). Work until the budget runs out. Finish the current task and commit rather than leaving work half-done.
 
 ## Boundaries
 
