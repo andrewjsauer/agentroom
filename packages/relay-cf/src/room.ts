@@ -173,7 +173,10 @@ export class Room extends DurableObject<Env> {
       return;
     }
     for (const w of this.sockets("closer")) {
-      if ((att(w).closeBy ?? 0) <= now) w.close(1000);
+      if ((att(w).closeBy ?? 0) > now) continue;
+      // Drop the role first: a peer that never answers the close must not keep rescheduling the alarm.
+      w.serializeAttachment({ ...att(w), role: "pending" });
+      w.close(1000);
     }
     await this.schedule();
   }
