@@ -1,8 +1,8 @@
 import { type Ref, refText } from "@agentroom/protocol";
 
-export const HANDOFF_MAX_CHARS = 8_000;
+const HANDOFF_MAX_CHARS = 8_000;
 
-export interface HandoffInput {
+interface HandoffInput {
   summary: string;
   decisions: string[];
   openQuestions: string[];

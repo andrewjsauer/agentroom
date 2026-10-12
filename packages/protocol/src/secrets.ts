@@ -87,7 +87,7 @@ const GENERIC_NAME_ALLOW =
 const GENERIC_EXPLANATION =
   "It looks like a key, token, secret or password assigned a random-looking value.";
 
-export function shannonEntropy(s: string): number {
+function shannonEntropy(s: string): number {
   const counts = new Map<string, number>();
   for (const ch of s) counts.set(ch, (counts.get(ch) ?? 0) + 1);
   let bits = 0;

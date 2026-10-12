@@ -57,7 +57,7 @@ export async function createTestRoom(
 export async function injectHuman(
   relay: RelayHandle,
   room: TestRoom,
-  opts: { kind: EnvelopeKind; thread: string; body?: string; member?: string },
+  opts: { kind: EnvelopeKind; thread: string; body?: string },
 ): Promise<string> {
   const id = ulid();
   const blob = await seal(
@@ -65,7 +65,7 @@ export async function injectHuman(
       v: 1,
       id,
       ts: Date.now(),
-      from: { member: opts.member ?? "alice", agent: "human", via: "cli" },
+      from: { member: "alice", agent: "human", via: "cli" },
       kind: opts.kind,
       thread: opts.thread,
       body: opts.body ?? "",

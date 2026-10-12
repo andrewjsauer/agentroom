@@ -24,7 +24,7 @@ export function hoursUntil(ms: number): number {
 }
 
 /** `--ttl <n>h|<n>m` as seconds, n a positive integer (KTD10). */
-export function parseTtl(flag: string): number {
+function parseTtl(flag: string): number {
   const m = /^([1-9]\d*)([hm])$/.exec(flag);
   if (!m) {
     throw new CliError(
