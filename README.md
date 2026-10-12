@@ -4,6 +4,8 @@
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
+**Status: pre-release.** `agentroom` is not on npm yet and no public relay is running, so `npx agentroom` and the default relay do not work today. Run it from source and point it at a relay you start yourself; see [Try it now (from source)](#try-it-now-from-source).
+
 ```
 Andrew:   npx agentroom up --agent claude
           -> Room ready. Share this code: ar1_k7Fq...9Wd  (expires in 24h)
@@ -35,7 +37,66 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/RELEASE_CHECKLIST.md` | Manual pre-release check with Claude Code, Codex and Gemini CLI in one room. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
-## Quickstart
+## Try it now (from source)
+
+You need Node 20.19 or newer and git.
+
+```
+git clone <this repo> agentroom && cd agentroom
+corepack enable
+pnpm install
+pnpm build
+cd packages/cli && npm link && cd ../..     # puts `agentroom` on PATH
+```
+
+`npm link` symlinks the checkout's `packages/cli` into npm's global prefix, so `agentroom` runs your build and picks up later rebuilds; `npm uninstall -g agentroom` removes it. If you would rather not link, `alias agentroom="node $PWD/packages/cli/dist/bin.js"` works in the current shell. Either way, the MCP entries that `up`, `join` and `install` write run `node <checkout>/packages/cli/dist/bin.js mcp` by absolute path, so the agents themselves do not need `agentroom` on PATH.
+
+### Solo trial on one machine
+
+Start a relay in its own terminal and leave it running:
+
+```
+PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js
+```
+
+Then use two terminals, one per side. Give each its own `AGENTROOM_HOME`: with a shared `~/.agentroom`, `join` overwrites the creator's `room.json` (member name, agent, project directory) and both sides' MCP servers would share one local message queue.
+
+```
+# Terminal A, in project A
+export AGENTROOM_RELAY=ws://127.0.0.1:8787
+export AGENTROOM_HOME=~/.agentroom-a
+agentroom up --agent claude --name alice      # prints the join command
+claude                                        # start the agent from this terminal
+
+# Terminal B, in project B
+export AGENTROOM_RELAY=ws://127.0.0.1:8787
+export AGENTROOM_HOME=~/.agentroom-b
+agentroom join <code> --agent codex --name bob
+codex
+```
+
+Start each agent from its own terminal so its MCP server inherits that terminal's `AGENTROOM_HOME`. The agent config entries do not name a room or a home directory, so the user-scope plugin and config files are safe to share. If an agent does not pass its environment through to MCP servers, add `AGENTROOM_HOME` to the `env` of its agentroom MCP entry.
+
+### Two people on different machines
+
+Each person builds a checkout as above. Both sides need a relay they can both reach; `127.0.0.1` will not do. Three options, details in [Choosing and running a relay](#choosing-and-running-a-relay):
+
+- **Quick tunnel to a local relay-node.** Run relay-node as above, then `cloudflared tunnel --url http://localhost:8787`. It prints an `https://<name>.trycloudflare.com` address; use it as `wss://<name>.trycloudflare.com`. The address changes every run and the relay's rooms vanish when you stop it, which suits a trial.
+- **relay-cf on Cloudflare Workers**, deployed with `wrangler deploy`.
+- **relay-node on a server**, behind a reverse proxy that terminates TLS.
+
+The creator runs `agentroom up --agent <agent> --relay wss://...`. Whenever the relay is not the built-in default, `up` prints the join command with `--relay` included, so the other person copies it as is and adds their own `--agent`. Each person restarts their agent afterwards.
+
+### What to type in the agent
+
+- **Claude Code**: `/agentroom:sync` summarizes new messages, `/agentroom:ask <topic>` has Claude draft a question that you release with `/agentroom:send <hash>`, and `/agentroom:say <text>` posts your own words. New messages are also added to your next prompt.
+- **Codex, Gemini CLI, Cursor**: ask in plain words, for example "check your agentroom inbox" or "ask bob in the agentroom which commit the iOS build uses". To speak as yourself, run `agentroom watch` in a separate terminal pane (with the same `AGENTROOM_HOME`).
+
+When you are done, the creator runs `agentroom down`.
+
+## Quickstart (once published)
+
+This is how it will work once `agentroom` is on npm and a public relay is running. Neither exists yet; use [Try it now (from source)](#try-it-now-from-source) until then.
 
 One person creates the room and shares the code; everyone else joins with it. Pick your agent with `--agent`:
 
@@ -137,7 +198,7 @@ agentroom protects message contents from the relay and stops the common accident
 
 **What any member can do.** Anyone holding the share code is a full member until the room closes or expires: they read every message, post under any display name they choose, and stay until the end. Display names are claims, not identities.
 
-**Human tags.** The MCP server never emits a message tagged `human`; that is enforced in code and tested. CLI `say` and `approve` (and, from Milestone 3, the Claude Code hook) are the only human paths. Their terminal and agent-marker checks stop accidental impersonation only. An agent running as your OS user can read `room.json` and forge any tag, so a human tag means "probably typed by a person", not proof.
+**Human tags.** The MCP server never emits a message tagged `human`; that is enforced in code and tested. The only human paths are CLI `say` and `approve`, the `watch` pane, and the Claude Code plugin's prompt hooks for `/agentroom:say`, `/agentroom:approve` and `/agentroom:send`, which run on text you typed. Their terminal and agent-marker checks stop accidental impersonation only. An agent running as your OS user can read `room.json` and forge any tag, so a human tag means "probably typed by a person", not proof.
 
 **Chain limits.** Each MCP server stops its own agent after N agent messages in a row in a thread (and 2N across the room) with no human message. The count is per sender: two agents posting at the same moment can overshoot by at most one message each.
 
@@ -162,8 +223,10 @@ pnpm test        # vitest in every package
 pnpm format      # Biome format, writes changes
 ```
 
-Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
+Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (to be published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
 
 ## Status
 
-Milestone 4 (agnostic): Codex, Gemini CLI and Cursor adapters, room rules in the MCP instructions, own-message tracking by envelope id, and the Cloudflare relay. Publishing to npm and a hosted relay are still to come. Milestone 3 (Claude Code plugin and humans): the `plugins/claude-code` plugin with hook-based `/agentroom:say`, `approve` and draft release, `between` delivery at the next prompt, delivery modes, desktop notifications, a chained status line, and the `watch` pane. Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
+The code for milestones 1 to 4 is in place: encrypted rooms, the relay (Node and Cloudflare), the MCP server with chain limits and secret scanning, the Claude Code plugin with human commands, the `watch` pane, and the Codex, Gemini CLI and Cursor adapters.
+
+Not done yet: publishing `agentroom` to npm, a hosted public relay, and a full run of the manual multi-agent check in `docs/RELEASE_CHECKLIST.md` (which also measures whether Codex, Gemini CLI and Cursor check their inbox unprompted).
