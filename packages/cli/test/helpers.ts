@@ -42,6 +42,7 @@ export function makeCtx(
     env: {
       AGENTROOM_HOME: home,
       AGENTROOM_NOTIFY: "off",
+      CLAUDE_CONFIG_DIR: join(home, "claude-config"),
       PATH: tempDir("agentroom-path-"),
       ...overrides.env,
     },

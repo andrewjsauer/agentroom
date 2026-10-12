@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import {
   type AgentName,
   agentroomHome,
   findOnPath,
   roomExists,
 } from "@agentroom/mcp";
+import { installStatusLine } from "../claude-settings.js";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
@@ -29,44 +30,49 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** Register the room's MCP server with Claude Code, or fall back to a project `.mcp.json`. */
-function installClaude(roomId: string, ctx: CliContext): number {
-  const { command, args } = mcpServerCommand(ctx.entryPath, roomId);
-  const claude = findOnPath(ctx.env.PATH, "claude");
-  if (claude) {
-    // A missing entry makes remove fail; that is fine.
-    spawnSync(claude, ["mcp", "remove", "--scope", "user", "agentroom"], {
-      env: ctx.env,
-      stdio: "ignore",
-    });
-    const add = spawnSync(
-      claude,
-      [
-        "mcp",
-        "add",
-        "--scope",
-        "user",
-        "--transport",
-        "stdio",
-        "agentroom",
-        "--",
-        command,
-        ...args,
-      ],
-      { env: ctx.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (add.status !== 0) {
-      ctx.stderr.write(
-        `agentroom: \`claude mcp add\` failed (exit ${add.status}):\n${add.stderr}`,
-      );
-      return 1;
-    }
-    ctx.stdout.write(
-      "Registered the agentroom MCP server with Claude Code (user scope). Restart Claude Code to load the tools.\n",
-    );
-    return 0;
-  }
+/** Remove the M1 user-scope registration; a missing entry makes this fail, which is fine. */
+function removeUserMcp(claude: string, ctx: CliContext): void {
+  spawnSync(claude, ["mcp", "remove", "--scope", "user", "agentroom"], {
+    env: ctx.env,
+    stdio: "ignore",
+  });
+}
 
+/** M1: register the room's MCP server with `claude mcp add`. */
+function registerMcp(claude: string, roomId: string, ctx: CliContext): number {
+  const { command, args } = mcpServerCommand(ctx.entryPath, roomId);
+  removeUserMcp(claude, ctx);
+  const add = spawnSync(
+    claude,
+    [
+      "mcp",
+      "add",
+      "--scope",
+      "user",
+      "--transport",
+      "stdio",
+      "agentroom",
+      "--",
+      command,
+      ...args,
+    ],
+    { env: ctx.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (add.status !== 0) {
+    ctx.stderr.write(
+      `agentroom: \`claude mcp add\` failed (exit ${add.status}):\n${add.stderr}`,
+    );
+    return 1;
+  }
+  ctx.stdout.write(
+    "Registered the agentroom MCP server with Claude Code (user scope). Restart Claude Code to load the tools.\n",
+  );
+  return 0;
+}
+
+/** M1 fallback without `claude` on PATH: a project `.mcp.json` entry. */
+function writeProjectMcp(roomId: string, ctx: CliContext): void {
+  const { command, args } = mcpServerCommand(ctx.entryPath, roomId);
   const file = join(ctx.cwd, ".mcp.json");
   let config: Record<string, unknown> = {};
   let existing: string | undefined;
@@ -96,6 +102,83 @@ function installClaude(roomId: string, ctx: CliContext): number {
   ctx.stdout.write(
     `\`claude\` is not on PATH, so the server was written to ${file} (project scope). Do not commit that file: it names the room id. Restart Claude Code in this directory to load the tools.\n`,
   );
+}
+
+/** The checkout root holding the marketplace, when the entry is a checkout's dist/bin.js. */
+function checkoutRoot(entryPath: string): string | undefined {
+  if (entryPath.split(sep).includes("node_modules")) return undefined;
+  const root = resolve(dirname(entryPath), "../../..");
+  return existsSync(join(root, ".claude-plugin", "marketplace.json"))
+    ? root
+    : undefined;
+}
+
+function writeStatusLine(ctx: CliContext): void {
+  const file = installStatusLine(ctx);
+  ctx.stdout.write(
+    file === undefined
+      ? "Neither CLAUDE_CONFIG_DIR nor HOME is set, so the status line was not installed.\n"
+      : `Set the Claude Code status line in ${file} (your previous one, if any, is chained).\n`,
+  );
+}
+
+/**
+ * Set Claude Code up (KTD3): from a checkout with `claude` on PATH, install the plugin from the
+ * repo-root marketplace; from an npm copy, register the MCP server (M1); without `claude`,
+ * write `.mcp.json` (M1). The status line is written for checkout entries.
+ */
+function installClaude(roomId: string, ctx: CliContext): number {
+  const claude = findOnPath(ctx.env.PATH, "claude");
+  const root = checkoutRoot(ctx.entryPath);
+  const npm = ctx.entryPath.split(sep).includes("node_modules");
+  if (claude && root) {
+    removeUserMcp(claude, ctx);
+    const r = spawnSync(
+      claude,
+      [
+        "plugin",
+        "install",
+        "agentroom",
+        "--marketplace",
+        root,
+        "--scope",
+        "user",
+      ],
+      { env: ctx.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (r.status !== 0) {
+      ctx.stderr.write(
+        `agentroom: \`claude plugin install\` failed (exit ${r.status}):\n${r.stderr}`,
+      );
+      return 1;
+    }
+    writeStatusLine(ctx);
+    ctx.stdout.write(
+      "Installed the agentroom Claude Code plugin (user scope). Restart Claude Code to load the agentroom plugin (or run /reload-plugins), then type /agentroom:sync.\n",
+    );
+    return 0;
+  }
+  if (claude) {
+    const code = registerMcp(claude, roomId, ctx);
+    if (code !== 0) return code;
+    if (npm) {
+      ctx.stdout.write(
+        "The Claude Code plugin (hooks, /agentroom commands, status line) installs from a checkout for now; npm installs get it with the npm release.\n",
+      );
+    } else {
+      writeStatusLine(ctx);
+    }
+    return 0;
+  }
+  writeProjectMcp(roomId, ctx);
+  if (!npm) {
+    writeStatusLine(ctx);
+    if (root) {
+      ctx.stdout.write(
+        `To load the plugin, start Claude Code with: claude --plugin-dir ${join(root, "plugins", "claude-code")}\n`,
+      );
+    }
+  }
   return 0;
 }
 

@@ -10,6 +10,7 @@ import { say } from "./commands/say.js";
 import { status } from "./commands/status.js";
 import { statusline } from "./commands/statusline.js";
 import { syncMode } from "./commands/sync-mode.js";
+import { uninstall } from "./commands/uninstall.js";
 import { up } from "./commands/up.js";
 import { type CliContext, CliError } from "./context.js";
 
@@ -57,6 +58,8 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return syncMode(parsed.positionals, parsed.values, ctx);
       case "statusline":
         return await statusline(parsed.values, ctx);
+      case "uninstall":
+        return uninstall(parsed.positionals, ctx);
       case "hook":
         return await hook(parsed.positionals, ctx);
     }

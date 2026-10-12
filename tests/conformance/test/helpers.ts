@@ -19,6 +19,7 @@ export function baseEnv(
   return {
     AGENTROOM_HOME: home,
     AGENTROOM_NOTIFY: "off",
+    CLAUDE_CONFIG_DIR: `${home}/claude-config`,
     AGENTROOM_RELAY: relayUrl,
     PATH: dirname(process.execPath),
   };
