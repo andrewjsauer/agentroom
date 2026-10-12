@@ -1,7 +1,11 @@
 import { existsSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { sealMeta } from "@agentroom/protocol";
-import { type RelayHandle, startRelay } from "@agentroom/relay-node";
+import {
+  type RelayEvent,
+  type RelayHandle,
+  startRelay,
+} from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
 import {
@@ -23,11 +27,13 @@ import {
 
 let relay: RelayHandle;
 let room: TestRoom;
+let events: RelayEvent[];
 const homes: string[] = [];
 const sessions: RoomSession[] = [];
 
 beforeEach(async () => {
-  relay = await startRelay({ port: 0, log: () => {} });
+  events = [];
+  relay = await startRelay({ port: 0, log: (e) => events.push(e) });
   room = await createTestRoom(relay);
 });
 
@@ -58,6 +64,7 @@ test("closed: room dir deleted, current cleared, one final read, then the closed
 
   await closeTestRoom(relay, room);
   await until(() => a.session.gone && b.session.gone, 5000, "both gone");
+  const eventsAtGone = events.length;
   expect(existsSync(roomDir(a.home, room.roomId))).toBe(false);
   expect(readCurrent(a.home)).toBeUndefined();
 
@@ -71,6 +78,8 @@ test("closed: room dir deleted, current cleared, one final read, then the closed
   );
   await sleep(50);
   expect(a.session.status().connection).toBe("gone");
+  // No reconnect: a new hello would log conn_open or a room_expired error.
+  expect(events.slice(eventsAtGone)).toEqual([]);
   expect(existsSync(roomDir(a.home, room.roomId))).toBe(false);
 });
 
