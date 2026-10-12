@@ -2,9 +2,13 @@ import { randomBytes } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -201,17 +205,25 @@ export function readQueueTail(
   roomId: string,
   from: number,
 ): { readIds: string[]; sentIds: string[]; bytes: number } {
+  // Read only the bytes after `from`: this runs per inbound message, and the queue holds every blob.
   let buf: Buffer;
   try {
-    buf = readFileSync(join(roomDir(home, roomId), "queue.jsonl"));
+    const fd = openSync(join(roomDir(home, roomId), "queue.jsonl"), "r");
+    try {
+      const size = fstatSync(fd).size;
+      buf = Buffer.alloc(Math.max(0, size - from));
+      buf = buf.subarray(0, readSync(fd, buf, 0, buf.length, from));
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return { readIds: [], sentIds: [], bytes: from };
   }
   const end = buf.lastIndexOf(10) + 1;
-  if (end <= from) return { readIds: [], sentIds: [], bytes: from };
+  if (end === 0) return { readIds: [], sentIds: [], bytes: from };
   const readIds: string[] = [];
   const sentIds: string[] = [];
-  for (const line of buf.subarray(from, end).toString("utf8").split("\n")) {
+  for (const line of buf.subarray(0, end).toString("utf8").split("\n")) {
     if (!line.includes('"t":"read"') && !line.includes('"t":"sent"')) continue;
     try {
       const rec = QueueRecord.parse(JSON.parse(line));
@@ -221,7 +233,7 @@ export function readQueueTail(
       // Unparseable line: skipped, as in replayQueue.
     }
   }
-  return { readIds, sentIds, bytes: end };
+  return { readIds, sentIds, bytes: from + end };
 }
 
 export function writeStatus(
