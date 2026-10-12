@@ -1,23 +1,26 @@
-import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import {
-  ClientFrame,
   type ErrorCode,
   type HelloFrame,
   type RelayFrame,
   verifyClose,
 } from "@agentroom/protocol";
+import {
+  admitPut,
+  applyPut,
+  DEFAULT_LIMITS,
+  decideHello,
+  MAX_FRAME_BYTES,
+  newNonce,
+  parseClientFrame,
+  type RelayEvent,
+  type RelayLimits,
+  expiresAt as roomExpiresAt,
+  tombstoneUntil,
+} from "@agentroom/protocol/relay-core";
 import { type WebSocket, WebSocketServer } from "ws";
 
-/** Structured relay event. Never carries a blob or meta (invariant 1). */
-export type RelayEvent =
-  | { event: "room_created"; room: string }
-  | { event: "room_expired"; room: string }
-  | { event: "room_closed"; room: string }
-  | { event: "conn_open"; room: string; members: number }
-  | { event: "closer_open"; room: string }
-  | { event: "conn_close"; room: string; members: number }
-  | { event: "error"; code: ErrorCode };
+export type { RelayEvent } from "@agentroom/protocol/relay-core";
 
 export interface RelayOptions {
   port: number;
@@ -77,24 +80,27 @@ interface Conn {
   refilledAt: number;
 }
 
-const MAX_PAYLOAD = 96 * 1024;
-
 function defaultLog(event: RelayEvent): void {
   process.stderr.write(`${JSON.stringify(event)}\n`);
 }
 
 /** Start an in-memory relay. Resolves once it is listening. */
 export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
-  const idleTtlSec = opts.idleTtlSec ?? 28_800;
-  const bufferSize = opts.bufferSize ?? 500;
-  const maxEnvelopeBytes = opts.maxEnvelopeBytes ?? 65_536;
+  const d = DEFAULT_LIMITS;
+  const limits: RelayLimits = {
+    idleTtlSec: opts.idleTtlSec ?? d.idleTtlSec,
+    maxAgeSec: opts.maxAgeSec ?? d.maxAgeSec,
+    bufferSize: opts.bufferSize ?? d.bufferSize,
+    maxEnvelopeBytes: opts.maxEnvelopeBytes ?? d.maxEnvelopeBytes,
+    maxMembers: opts.maxMembers ?? d.maxMembers,
+    maxClosers: opts.maxClosers ?? d.maxClosers,
+    rateBurst: opts.rateLimit?.burst ?? d.rateBurst,
+    ratePerSec: opts.rateLimit?.perSec ?? d.ratePerSec,
+    closeGraceMs: opts.closeGraceMs ?? d.closeGraceMs,
+  };
   const now = opts.now ?? Date.now;
   const log = opts.log ?? defaultLog;
   const host = opts.host ?? "127.0.0.1";
-  const maxAgeSec = opts.maxAgeSec ?? 86_400;
-  const maxMembers = opts.maxMembers ?? 8;
-  const maxClosers = opts.maxClosers ?? 2;
-  const rateLimit = opts.rateLimit ?? { burst: 20, perSec: 2 };
   const rooms = new Map<string, Room>();
   /** Closed or expired room ids, remembered until createdAt + maxAge (KTD7). */
   const tombstones = new Map<string, number>();
@@ -103,7 +109,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const wss = new WebSocketServer({
     port: opts.port,
     host,
-    maxPayload: MAX_PAYLOAD,
+    maxPayload: MAX_FRAME_BYTES,
     verifyClient: () => accepting,
   });
   await new Promise<void>((resolve, reject) => {
@@ -125,16 +131,12 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     if (end) ws.close();
   };
 
-  const expiresAt = (room: Room) =>
-    Math.min(
-      room.state.lastActivity + room.state.idleTtlSec * 1000,
-      room.state.createdAt + room.state.maxAgeSec * 1000,
-    );
+  const expiresAt = (room: Room) => roomExpiresAt(room.state);
 
   /** Drop a room, send `frame` to every connection, close them, and tombstone the id. */
   const drop = (id: string, room: Room, frame: RelayFrame) => {
     rooms.delete(id);
-    tombstones.set(id, room.state.createdAt + room.state.maxAgeSec * 1000);
+    tombstones.set(id, tombstoneUntil(room.state));
     for (const c of [...room.conns, ...room.closers]) {
       send(c, frame);
       c.close();
@@ -167,66 +169,37 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
 
   const put = (room: Room, blob: string) => {
-    room.state.seq += 1;
-    room.state.buffer.push({ seq: room.state.seq, blob });
-    if (room.state.buffer.length > bufferSize) room.state.buffer.shift();
-    room.state.lastActivity = now();
+    const seq = applyPut(room.state, now());
+    room.state.buffer.push({ seq, blob });
+    if (room.state.buffer.length > limits.bufferSize) room.state.buffer.shift();
     broadcast(room, { t: "msg", seq: room.state.seq, blob });
   };
 
   const join = (ws: WebSocket, conn: Conn, hello: HelloFrame): void => {
-    if (hello.closeOnly && (hello.create || hello.since !== undefined)) {
-      fail(
-        ws,
-        "bad_proto",
-        "closeOnly cannot be combined with create or since",
-      );
-      return;
-    }
     let room = liveRoom(hello.room);
-    if (!room && tombstones.has(hello.room)) {
-      fail(ws, "room_expired", "room was closed or expired");
+    const decision = decideHello(hello, {
+      room: room?.state,
+      tombstoned: tombstones.has(hello.room),
+      members: room?.conns.size ?? 0,
+      closers: room?.closers.size ?? 0,
+      now: now(),
+      limits,
+    });
+    if (!decision.ok) {
+      fail(ws, decision.code, decision.message);
       return;
     }
-    if (hello.create) {
-      if (room) {
-        fail(ws, "room_exists", "a live room already has this id");
-        return;
-      }
-      const t = now();
+    if (decision.created) {
       room = {
-        state: {
-          roomId: hello.room,
-          seq: 0,
-          buffer: [],
-          meta: hello.create.meta,
-          closeKey: hello.create.closeKey,
-          idleTtlSec: Math.min(
-            hello.create.idleTtlSec ?? idleTtlSec,
-            idleTtlSec,
-          ),
-          maxAgeSec: Math.min(hello.create.maxAgeSec ?? maxAgeSec, maxAgeSec),
-          createdAt: t,
-          lastActivity: t,
-        },
+        state: { ...decision.created, buffer: [] },
         conns: new Set(),
         closers: new Set(),
       };
       rooms.set(hello.room, room);
       log({ event: "room_created", room: hello.room });
-    } else if (!room) {
-      fail(
-        ws,
-        "room_not_found",
-        "room not found: it expired, was closed, or the relay restarted",
-      );
-      return;
     }
-    if (!hello.closeOnly && room.conns.size >= maxMembers) {
-      fail(ws, "room_full", "room is at its connection cap");
-      return;
-    }
-    if (hello.closeOnly && room.closers.size >= maxClosers) {
+    if (!room) return;
+    if (decision.evictCloser) {
       // Evict the oldest closer rather than refuse: a leaked share code must not be able to block close.
       const [oldest] = room.closers;
       if (oldest) {
@@ -234,16 +207,13 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         fail(oldest, "room_full", "replaced by a newer close-only connection");
       }
     }
-    const nonce = randomBytes(16).toString("base64");
+    const nonce = newNonce();
     conn.room = room;
     conn.nonce = nonce;
-    conn.closeOnly = hello.closeOnly === true;
+    conn.closeOnly = decision.closeOnly;
     if (conn.closeOnly) {
       room.closers.add(ws);
-      conn.graceTimer = setTimeout(
-        () => ws.close(),
-        opts.closeGraceMs ?? 10_000,
-      );
+      conn.graceTimer = setTimeout(() => ws.close(), limits.closeGraceMs);
       conn.graceTimer.unref();
     } else {
       room.state.lastActivity = now();
@@ -291,17 +261,14 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   wss.on("connection", (ws) => {
     const conn: Conn = {
       closeOnly: false,
-      tokens: rateLimit.burst,
+      tokens: limits.rateBurst,
       refilledAt: now(),
     };
     let greeted = false;
     ws.on("error", () => {});
     ws.on("message", (data, isBinary) => {
-      let frame: ClientFrame;
-      try {
-        if (isBinary) throw new Error("binary frame");
-        frame = ClientFrame.parse(JSON.parse(data.toString()));
-      } catch {
+      const frame = isBinary ? undefined : parseClientFrame(data.toString());
+      if (!frame) {
         fail(ws, "bad_proto", "malformed frame");
         return;
       }
@@ -328,19 +295,9 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       }
       const room = conn.room;
       if (!room || liveRoom(room.state.roomId) !== room) return;
-      const t = now();
-      conn.tokens = Math.min(
-        rateLimit.burst,
-        conn.tokens + ((t - conn.refilledAt) / 1000) * rateLimit.perSec,
-      );
-      conn.refilledAt = t;
-      if (conn.tokens < 1) {
-        fail(ws, "rate_limited", "too many messages; slow down", false);
-        return;
-      }
-      conn.tokens -= 1;
-      if (Buffer.byteLength(frame.blob, "base64") > maxEnvelopeBytes) {
-        fail(ws, "too_large", "envelope exceeds 64 KiB", false);
+      const admit = admitPut(conn, frame.blob, now(), limits);
+      if (!admit.ok) {
+        fail(ws, admit.code, admit.message, false);
         return;
       }
       put(room, frame.blob);

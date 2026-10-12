@@ -74,3 +74,13 @@ export const RelayFrame = z.discriminatedUnion("t", [
   ErrorFrame,
 ]);
 export type RelayFrame = z.infer<typeof RelayFrame>;
+
+/**
+ * The relay URL with `?room=<room_id>` set (M4 KTD8): a Cloudflare relay picks the room's
+ * Durable Object at upgrade time, before `hello`. relay-node ignores the query.
+ */
+export function roomUrl(relay: string, roomId: string): string {
+  const url = new URL(relay);
+  url.searchParams.set("room", roomId);
+  return url.toString();
+}

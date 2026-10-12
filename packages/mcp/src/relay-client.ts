@@ -4,6 +4,7 @@ import {
   type HelloFrame,
   PROTOCOL_VERSION,
   RelayFrame,
+  roomUrl,
   type WelcomeFrame,
 } from "@agentroom/protocol";
 import WebSocket from "ws";
@@ -84,7 +85,7 @@ export class RelayClient {
   private connect(): void {
     if (this.stopped) return;
     this.setState("connecting");
-    const ws = new WebSocket(this.opts.url);
+    const ws = new WebSocket(roomUrl(this.opts.url, this.opts.roomId));
     this.ws = ws;
     ws.on("open", () => {
       const hello: HelloFrame = {
@@ -153,7 +154,7 @@ export function oneShot(opts: {
   timeoutMs?: number;
 }): Promise<WelcomeFrame | ErrorFrame> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(opts.url);
+    const ws = new WebSocket(roomUrl(opts.url, opts.hello.room));
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error(`relay at ${opts.url} did not answer`));
@@ -224,7 +225,7 @@ export function connectOnce(opts: {
 }): Promise<OnceSession> {
   const timeoutMs = opts.timeoutMs ?? 10_000;
   return new Promise((resolveConnect, rejectConnect) => {
-    const ws = new WebSocket(opts.url);
+    const ws = new WebSocket(roomUrl(opts.url, opts.hello.room));
     const msgs: { seq: number; blob: string }[] = [];
     let welcome: WelcomeFrame | undefined;
     let ready = false;

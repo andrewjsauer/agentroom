@@ -19,18 +19,25 @@ export function baseEnv(
   return {
     AGENTROOM_HOME: home,
     AGENTROOM_NOTIFY: "off",
+    HOME: home,
     CLAUDE_CONFIG_DIR: `${home}/claude-config`,
     AGENTROOM_RELAY: relayUrl,
     PATH: dirname(process.execPath),
   };
 }
 
-/** Run the built CLI; resolves with stdout, rejects with the exec error (code, stdout, stderr). */
+/**
+ * Run the built CLI in the temp home (so adapter installs never touch this checkout); resolves
+ * with stdout, rejects with the exec error (code, stdout, stderr).
+ */
 export async function cli(
   env: Record<string, string>,
   args: string[],
 ): Promise<string> {
-  const { stdout } = await run(process.execPath, [BIN, ...args], { env });
+  const { stdout } = await run(process.execPath, [BIN, ...args], {
+    env,
+    cwd: env.HOME,
+  });
   return stdout;
 }
 

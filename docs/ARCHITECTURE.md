@@ -49,7 +49,7 @@ Responsibilities, and nothing else:
 - Presence: broadcasts connection counts only. Display names travel inside encrypted `presence` envelopes, and clients count members by distinct member name from those, since one person may hold several connections (MCP server, `watch`, a one-shot CLI command). The member cap counts connections.
 - Room settings: the creating `hello` carries the idle and max-age TTLs in plaintext (capped at the relay defaults) and an opaque encrypted `meta` blob (room name, `maxAgentChain`). The relay stores both outside the ring buffer and returns `meta` in every `welcome`, so late joiners get the settings even after the buffer has rolled over.
 
-Relay wire protocol (JSON over WebSocket, plaintext framing around ciphertext):
+Relay wire protocol (JSON over WebSocket, plaintext framing around ciphertext). Clients connect to the relay URL with `?room=<room_id>` added (set with the `URL` API by `roomUrl` in `protocol/wire.ts`, so relay URLs with paths still work): a Worker must pick the room's Durable Object at upgrade time, before `hello` arrives. relay-cf refuses an upgrade whose `room` is missing or not 64 lowercase hex with HTTP 400, and answers a `hello` whose `room` differs from the URL with `bad_proto`. relay-node ignores the query. The id was already visible to the relay; the only new exposure is that request logs (Cloudflare's included) can record it.
 
 ```ts
 // client -> relay
@@ -82,8 +82,9 @@ Wire behavior fixed in milestone 1 (both relays must match it):
 
 Two implementations share the same protocol and a shared conformance test suite:
 
-- `relay-node`: a ~200-line server for self-hosting and local dev.
-- `relay-cf`: one Durable Object per room, WebSocket hibernation so idle rooms cost nothing, alarms for expiry. Hibernation evicts in-memory state, so the buffer, seq counter, close key, TTLs and `meta` live in Durable Object transactional storage, and the expiry alarm and the close handler call `storage.deleteAll()`. Public hosted default.
+- Room rules (frame parsing, create and join decisions, caps, rate limit, envelope size, expiry deadline, tombstone time, nonce, close-signature check) live once in `packages/protocol/src/relay-core.ts`, exported as `@agentroom/protocol/relay-core`. It uses only `zod` and Web platform globals (no Node APIs, `Buffer` or libsodium; a test guards this), so both relays import it.
+- `relay-node`: a ~300-line server for self-hosting and local dev, on the shared core. It verifies `close` with protocol's libsodium `verifyClose`.
+- `relay-cf`: one Durable Object per room (`idFromName(room_id)`), WebSocket hibernation so idle rooms cost nothing, alarms for expiry. Hibernation evicts in-memory state, so per-connection role, nonce, rate-limit tokens and closer deadline live in the socket attachment, and room state lives in Durable Object storage under three kinds of key: `room` (seq, meta, close key, TTLs, createdAt, lastActivity), `b:<seq, zero-padded to 10>` (one ciphertext blob each, the last 500 kept) and `tomb` (only the time until which the id is refused). One alarm runs at the earliest of the room's expiry, a closer's grace deadline and the tombstone time, and re-reads storage when it fires. Close and expiry send the frames, close the sockets, call `storage.deleteAll()` and `deleteAlarm()`, then write only `tomb`; the tombstone alarm deletes everything again. Limits come from wrangler `vars` with relay-node's defaults. It verifies `close` with Web Crypto Ed25519 (see Crypto). Public hosted default.
 
 ## Crypto
 
@@ -99,7 +100,7 @@ HKDF comes from Node's `crypto.hkdfSync` (`libsodium-wrappers` does not expose H
 - Envelope encryption: XChaCha20-Poly1305 (libsodium `crypto_aead_xchacha20poly1305_ietf`) with a random 24-byte nonce per message. Ciphertext blob = `nonce || ciphertext`.
 - Associated data: `room_id`, binding ciphertext to the room.
 - A 256-bit random secret cannot be brute-forced, so holding `room_id` gives the relay nothing.
-- Creator-only close: `up` generates a local-only Ed25519 keypair (libsodium `crypto_sign`), keeps the secret key in the room file, and sends the public key in plaintext in the creating `hello`. The relay pins it and verifies `close` against it. The key identifies the creating machine, not a person.
+- Creator-only close: `up` generates a local-only Ed25519 keypair (libsodium `crypto_sign`), keeps the secret key in the room file, and sends the public key in plaintext in the creating `hello`. The relay pins it and verifies `close` against it. The key identifies the creating machine, not a person. relay-cf verifies with Web Crypto's `crypto.subtle.verify("Ed25519", ...)` instead of libsodium, because workerd blocks compiling libsodium's WebAssembly at runtime; `verifyCloseWebCrypto` in the relay core builds the same message with the same strict base64 and length checks, and a test signs with libsodium and checks that both verifiers agree on valid, tampered, wrong-key, replayed-nonce and malformed inputs. This calls a platform primitive; it does not reimplement one.
 - Room `meta` (name, `maxAgentChain`) is encrypted with the room key like any envelope, so the relay stores it without reading it.
 - Threat model, v0: protects against a curious or compromised relay and network observers reading or forging messages. Does not protect against a malicious room member, who can read everything by design. Leakage of the share code (pasted in Slack) is the user's responsibility; document it.
 - The relay can still replay, reorder, delay, or drop envelopes. Clients drop any envelope id they have already seen and order by relay seq; a relay that drops messages is not detected in v0.
