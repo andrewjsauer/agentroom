@@ -470,7 +470,9 @@ export function createRoomSession(opts: {
     onError,
     onState: (state) => {
       if (state !== "live") settleCatchUp(true);
-      persistStatus();
+      // onGone follows "gone" and deletes the room dir; a status write now would race a `down`
+      // removing the same dir in another process (ENOTEMPTY).
+      if (state !== "gone") persistStatus();
     },
   });
 
