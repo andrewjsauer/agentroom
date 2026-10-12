@@ -3,6 +3,7 @@ import {
   clearCurrentIf,
   connectOnce,
   deleteRoomDir,
+  type OnceSession,
   RelayError,
 } from "@agentroom/mcp";
 import { signClose } from "@agentroom/protocol";
@@ -10,15 +11,12 @@ import {
   type CliContext,
   CliError,
   forgetGoneRoom,
+  isGone,
   loadRoom,
 } from "../context.js";
 
 export const CREATOR_ONLY_TEXT =
   "Only the machine that created this room can close it. Ask the creator to run `agentroom down`; this room's local state goes away when the room closes or expires.";
-
-const isGone = (err: unknown) =>
-  err instanceof RelayError &&
-  (err.code === "room_not_found" || err.code === "room_expired");
 
 /** Close the room as its creator: sign the fresh nonce over a close-only connection (KTD22). */
 export async function down(
@@ -30,7 +28,7 @@ export async function down(
   if (!room.createdByMe || !room.closeSecretKey) {
     throw new CliError(CREATOR_ONLY_TEXT);
   }
-  let once: Awaited<ReturnType<typeof connectOnce>>;
+  let once: OnceSession;
   try {
     once = await connectOnce({
       url: room.relay,

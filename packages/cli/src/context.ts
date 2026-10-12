@@ -3,6 +3,7 @@ import {
   agentroomHome,
   clearCurrentIf,
   deleteRoomDir,
+  RelayError,
   type RoomFile,
   readCurrent,
   readRoomFile,
@@ -16,9 +17,7 @@ export interface CliContext {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
   stdin: NodeJS.ReadableStream;
-  /** stdin is a TTY. */
   isTTY: boolean;
-  /** stdout is a TTY. */
   stdoutIsTTY: boolean;
   /** Absolute path of the running entry file (dist/bin.js). */
   entryPath: string;
@@ -85,6 +84,11 @@ export function loadRoom(
     "No current room. Run `agentroom up` or `agentroom join <code>`.",
   );
 }
+
+/** The relay refused because the room expired, was closed, or was never there. */
+export const isGone = (err: unknown): boolean =>
+  err instanceof RelayError &&
+  (err.code === "room_not_found" || err.code === "room_expired");
 
 /** Delete local state for a room the relay no longer has and return the text to show. */
 export function forgetGoneRoom(
