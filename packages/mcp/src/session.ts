@@ -32,6 +32,7 @@ import {
   deleteRoomDir,
   type QueueRecord,
   type RoomFile,
+  readQueueTail,
   readRoomFile,
   replayQueue,
   writeStatus,
@@ -47,6 +48,8 @@ const ECHO_TIMEOUT_MS = 10_000;
 const DEFAULT_LIMIT = 20;
 const MAX_NAME_CHARS = 64;
 const DEFAULT_MAX_AGENT_CHAIN = 3;
+const EXTERNAL_READ_MS = 2_000;
+const ROOM_NAME_CHARS = 32;
 
 /** Non-terminal relay errors fail the oldest in-flight send with these texts (KTD13). */
 const RELAY_ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -105,9 +108,11 @@ function buildFrom(
   return { member: room.member, agent: room.agent, via };
 }
 
+const isHuman = (env: Envelope) => (env.from.agent as string) === "human";
+
 /** Invariant 2 runtime guard, applied to every post and draft. */
 function refuseHuman(env: Envelope): void {
-  if ((env.from.agent as string) === "human") {
+  if (isHuman(env)) {
     throw new Error("the MCP server never sends as a human");
   }
 }
@@ -136,6 +141,8 @@ export function createRoomSession(opts: {
   roomId: string;
   env: NodeJS.ProcessEnv;
   backoff?: RelayClientOptions["backoff"];
+  /** How often to pick up `read` records written by the prompt hook (KTD14). */
+  externalReadMs?: number;
 }): RoomSession {
   const home = agentroomHome(opts.env);
   const roomId = opts.roomId;
@@ -146,6 +153,8 @@ export function createRoomSession(opts: {
   const seen = replay.seen;
   const unread = replay.unread;
   let lastSeq = replay.lastSeq;
+  let queueBytes = replay.bytes;
+  let roomName: string | undefined;
   const members = new Map<string, MemberSeen>();
   let connections = 0;
   let decryptFailures = 0;
@@ -229,7 +238,20 @@ export function createRoomSession(opts: {
       expiresAt,
       lastSeq,
       updatedAt: Date.now(),
+      waitingOnHuman: waitingThreads(chainState(ordered(), maxAgentChain))
+        .length,
+      ...(roomName === undefined ? {} : { roomName }),
     });
+  };
+
+  /** Apply `read` records another process (the prompt hook) appended (KTD13, KTD14). */
+  const syncExternalReads = () => {
+    if (gone) return;
+    const tail = readQueueTail(home, roomId, queueBytes);
+    queueBytes = tail.bytes;
+    let changed = false;
+    for (const id of tail.readIds) changed = unread.delete(id) || changed;
+    if (changed) persistStatus();
   };
 
   const wake = () => {
@@ -287,7 +309,11 @@ export function createRoomSession(opts: {
       persistStatus();
       return;
     }
-    const own = pending !== undefined;
+    // Own: this process's send, or this member's agent posting from elsewhere (a draft released
+    // by the hook, another session). This member's human stays unread for the agent (KTD14).
+    const own =
+      pending !== undefined ||
+      (env.from.member === session.room.member && !isHuman(env));
     seen.add(env.id);
     history.push({ seq, env, own });
     const record: QueueRecord = { t: "msg", seq, env, own };
@@ -296,7 +322,7 @@ export function createRoomSession(opts: {
     if (pending) {
       pendingEcho.delete(env.id);
       pending.resolve(seq);
-    } else if (env.kind !== "presence") {
+    } else if (!own && env.kind !== "presence") {
       unread.add(env.id);
       wake();
     }
@@ -313,6 +339,7 @@ export function createRoomSession(opts: {
 
   const onGone = (code: GoneCode) => {
     gone = true;
+    clearInterval(externalTimer);
     goneCode = code;
     client.stop();
     deleteRoomDir(home, roomId);
@@ -346,6 +373,10 @@ export function createRoomSession(opts: {
       metaRead ??= openMeta(w.meta, key, roomId).then(
         (m) => {
           maxAgentChain = m.maxAgentChain;
+          if (m.name !== undefined) {
+            roomName = stripControl(m.name).slice(0, ROOM_NAME_CHARS);
+          }
+          persistStatus();
         },
         () => {
           decryptFailures++;
@@ -434,6 +465,7 @@ export function createRoomSession(opts: {
 
   const inbox = (o: { thread?: string; limit?: number } = {}): string => {
     if (gone && finalReadDone) return goneText();
+    syncExternalReads();
     const all = unreadMessages().filter(
       (m) => o.thread === undefined || m.env.thread === o.thread,
     );
@@ -463,7 +495,10 @@ export function createRoomSession(opts: {
   const session: RoomSession = {
     roomId,
     room,
-    status,
+    status() {
+      syncExternalReads();
+      return status();
+    },
     get gone() {
       return gone;
     },
@@ -489,6 +524,7 @@ export function createRoomSession(opts: {
       return { env, hash: writePending(home, roomId, env) };
     },
     async wait(timeoutSec, signal) {
+      syncExternalReads();
       if (gone || unreadMessages().length > 0) return inbox();
       if (signal?.aborted) return WAIT_CANCELLED_TEXT;
       const outcome = await new Promise<"arrived" | "timeout" | "aborted">(
@@ -512,6 +548,7 @@ export function createRoomSession(opts: {
     },
     close() {
       closed = true;
+      clearInterval(externalTimer);
       client.stop();
       settleCatchUp(true);
       for (const p of pendingEcho.values()) {
@@ -522,6 +559,11 @@ export function createRoomSession(opts: {
     },
   };
 
+  const externalTimer = setInterval(
+    syncExternalReads,
+    opts.externalReadMs ?? EXTERNAL_READ_MS,
+  );
+  externalTimer.unref();
   client.start();
   return session;
 }

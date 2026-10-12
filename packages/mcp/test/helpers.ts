@@ -34,7 +34,7 @@ export interface TestRoom {
 /** Generate a share code and create the room on the relay. */
 export async function createTestRoom(
   relay: RelayHandle,
-  settings: { maxAgentChain?: number } = {},
+  settings: { maxAgentChain?: number; name?: string } = {},
 ): Promise<TestRoom> {
   const { code, secret } = generateShareCode();
   const { roomId, key } = deriveRoom(secret);

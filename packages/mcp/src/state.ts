@@ -67,6 +67,10 @@ export const StatusFile = z.object({
   expiresAt: z.number().nullable(),
   lastSeq: z.number(),
   updatedAt: z.number(),
+  /** Threads at the chain limit (KTD15); optional so older files still parse. */
+  waitingOnHuman: z.number().optional(),
+  /** Room name from meta, control characters stripped, at most 32 characters. */
+  roomName: z.string().optional(),
 });
 export type StatusFile = z.infer<typeof StatusFile>;
 
@@ -137,6 +141,8 @@ export interface Replay {
   history: StoredMessage[];
   unread: Set<string>;
   lastSeq: number;
+  /** Bytes of queue.jsonl up to the last complete line; reading resumes here. */
+  bytes: number;
 }
 
 /** Rebuild seen ids, history and unread from queue.jsonl. Unparseable lines (a torn tail) are skipped. */
@@ -146,14 +152,16 @@ export function replayQueue(home: string, roomId: string): Replay {
     history: [],
     unread: new Set(),
     lastSeq: 0,
+    bytes: 0,
   };
-  let text = "";
+  let buf: Buffer;
   try {
-    text = readFileSync(join(roomDir(home, roomId), "queue.jsonl"), "utf8");
+    buf = readFileSync(join(roomDir(home, roomId), "queue.jsonl"));
   } catch {
     return replay;
   }
-  for (const line of text.split("\n")) {
+  replay.bytes = buf.lastIndexOf(10) + 1;
+  for (const line of buf.toString("utf8").split("\n")) {
     if (!line) continue;
     let rec: QueueRecord;
     try {
@@ -172,6 +180,37 @@ export function replayQueue(home: string, roomId: string): Replay {
     if (!rec.own && rec.env.kind !== "presence") replay.unread.add(rec.env.id);
   }
   return replay;
+}
+
+/**
+ * Read records appended to queue.jsonl at or after byte `from` by other processes (KTD14).
+ * Returns the ids marked read and the offset after the last complete line; a torn tail is left
+ * for the next call. `msg` lines are ignored: the session already has them.
+ */
+export function readQueueTail(
+  home: string,
+  roomId: string,
+  from: number,
+): { readIds: string[]; bytes: number } {
+  let buf: Buffer;
+  try {
+    buf = readFileSync(join(roomDir(home, roomId), "queue.jsonl"));
+  } catch {
+    return { readIds: [], bytes: from };
+  }
+  const end = buf.lastIndexOf(10) + 1;
+  if (end <= from) return { readIds: [], bytes: from };
+  const readIds: string[] = [];
+  for (const line of buf.subarray(from, end).toString("utf8").split("\n")) {
+    if (!line.includes('"t":"read"')) continue;
+    try {
+      const rec = QueueRecord.parse(JSON.parse(line));
+      if (rec.t === "read") readIds.push(...rec.ids);
+    } catch {
+      // Unparseable line: skipped, as in replayQueue.
+    }
+  }
+  return { readIds, bytes: end };
 }
 
 export function writeStatus(
