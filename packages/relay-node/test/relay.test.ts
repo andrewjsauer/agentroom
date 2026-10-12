@@ -259,6 +259,25 @@ describe("expiry", () => {
   });
 });
 
+describe("expiry on access", () => {
+  test("an expired room is not revived by a hello or put before the sweep runs", async () => {
+    await start({ idleTtlSec: 10, sweepIntervalMs: 3_600_000 });
+    const { c: a } = await createRoom();
+    clock += 10_000;
+    const late = await connect();
+    late.send({ t: "hello", room: ROOM, proto: 1 });
+    expect(await late.next()).toMatchObject({ code: "room_not_found" });
+    expect(await a.next()).toMatchObject({ t: "error", code: "room_expired" });
+    expect(relay.snapshot(ROOM)).toBeUndefined();
+
+    const { c: b } = await createRoom();
+    clock += 10_000;
+    b.send({ t: "put", blob: "AAAA" });
+    expect(await b.next()).toMatchObject({ t: "error", code: "room_expired" });
+    expect(relay.snapshot(ROOM)).toBeUndefined();
+  });
+});
+
 test("invariant 1: stored state and logs hold no plaintext", async () => {
   await start();
   const secret = new Uint8Array(32).fill(9);

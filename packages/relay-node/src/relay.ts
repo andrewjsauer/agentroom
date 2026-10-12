@@ -103,6 +103,26 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const expiresAt = (room: Room) =>
     room.state.lastActivity + room.state.idleTtlSec * 1000;
 
+  const expire = (id: string, room: Room) => {
+    rooms.delete(id);
+    for (const c of room.conns) {
+      send(c, { t: "error", code: "room_expired", message: "room expired" });
+      c.close();
+    }
+    room.conns.clear();
+    log({ event: "room_expired", room: id });
+  };
+
+  /** The room if it exists and is within its idle TTL; an expired one is dropped now, not at the next sweep. */
+  const liveRoom = (id: string): Room | undefined => {
+    const room = rooms.get(id);
+    if (room && now() >= expiresAt(room)) {
+      expire(id, room);
+      return undefined;
+    }
+    return room;
+  };
+
   const broadcast = (room: Room, frame: RelayFrame, except?: WebSocket) => {
     for (const c of room.conns) if (c !== except) send(c, frame);
   };
@@ -116,7 +136,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
 
   const join = (ws: WebSocket, hello: HelloFrame): Room | undefined => {
-    let room = rooms.get(hello.room);
+    let room = liveRoom(hello.room);
     if (hello.create) {
       if (room) {
         fail(ws, "room_exists", "a live room already has this id");
@@ -200,7 +220,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         fail(ws, "bad_proto", "close is not supported until protocol M2");
         return;
       }
-      if (!room || rooms.get(room.state.roomId) !== room) return;
+      if (!room || liveRoom(room.state.roomId) !== room) return;
       if (Buffer.from(frame.blob, "base64").length > maxEnvelopeBytes) {
         fail(ws, "too_large", "envelope exceeds 64 KiB", false);
         return;
@@ -221,14 +241,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const sweep = setInterval(() => {
     const t = now();
     for (const [id, room] of rooms) {
-      if (t < expiresAt(room)) continue;
-      rooms.delete(id);
-      for (const c of room.conns) {
-        send(c, { t: "error", code: "room_expired", message: "room expired" });
-        c.close();
-      }
-      room.conns.clear();
-      log({ event: "room_expired", room: id });
+      if (t >= expiresAt(room)) expire(id, room);
     }
   }, opts.sweepIntervalMs ?? 60_000);
   sweep.unref();
