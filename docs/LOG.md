@@ -92,3 +92,29 @@ Decisions:
 - Agent markers that refuse `say`/`approve`/`export`: `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI`, `CURSOR_AGENT` (`OPEN_QUESTIONS.md` item 17). Open: `CLAUDECODE` also blocks a human typing in a Claude Code IDE terminal.
 
 Next: M3 (Claude Code plugin and humans).
+
+## 2026-10-12: M3 Claude Code plugin and humans
+
+Completed (commits `5f40e0b`..`581ea11`):
+- `plugins/claude-code`: manifest, `.mcp.json`, `hooks/hooks.json`, seven `/agentroom:*` skills (`sync`, `say`, `ask`, `handoff`, `send`, `approve`, `sync-mode`), launcher, repo-root marketplace. `claude plugin validate` passes.
+- CLI: `hook prompt-expansion` (posts `/agentroom:say` and `/agentroom:approve` as human, blocks the expansion), `hook prompt-submit` (`between` delivery framed with `frameInbound`, bound to `projectDir`, under a file lock), `/agentroom:send` draft release with three checks, `sync-mode`, `statusline --chain`, `install claude` (plugin install, chained status line saved to `claude-install.json`) and `uninstall claude`, `watch` pane (pure model and renderer, readline driver, human guard).
+- MCP: no-room stub, current-room default, hook read-record pickup, `waitingOnHuman` and `roomName` in `status.json`, desktop notifications (osascript or notify-send, arguments only, claimed once per room, `AGENTROOM_NOTIFY=off`).
+- Review: three bugs fixed (watch selection pinned by thread id; install no longer loses the original status line; two flaky or weak tests), dead exports removed.
+
+Test status (orchestrator's own run):
+```
+packages/protocol test:    Tests  127 passed (127)
+packages/relay-node test:  Tests   30 passed (30)
+packages/mcp test:         Tests   82 passed (82)
+packages/cli test:         Tests  136 passed (136)
+tests/conformance test:    Tests   17 passed (17)
+typecheck: Done (5 packages); biome: Checked 127 files. No fixes applied.
+claude plugin validate plugins/claude-code: Validation passed
+```
+
+Decisions and open items:
+- "Own" messages are currently any non-human message from the same member name. Two members with the same OS username (devcontainers: `dev`, `vscode`) would hide each other's agent messages. Decision: track own-post ids (session posts plus local hook and CLI posts recorded in `queue.jsonl`) instead of matching on member name; scheduled as the first M4 unit.
+- Unverified against a live Claude Code session: whether `command_name` arrives as `say` or `agentroom:say` (the hook accepts both), hook ordering between `UserPromptExpansion` and `UserPromptSubmit`, and the exit code of a repeated `claude plugin install`. First real use should check these.
+- Rooms created before M3 have no `projectDir` and get no `between` delivery.
+
+Next: M4 agent-doable parts (adapters, relay-cf, README).

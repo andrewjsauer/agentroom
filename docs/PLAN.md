@@ -53,13 +53,15 @@ Status 2026-10-12: each acceptance criterion has a passing test (relay-node inva
 
 ## Milestone 3: Claude Code plugin and humans (week 3)
 
-- [ ] `plugins/claude-code`: manifest bundling the MCP server, slash commands (`/sync`, `/say`, `/ask`, `/handoff`, `/send`, `/approve`, `/sync-mode`), `UserPromptSubmit` hook, status line script.
-- [ ] Hook-based human sending with prompt blocking; draft-and-approve flow for `/ask` and `/handoff` (`/send <hash>` refuses when `pending.json` changed after display; test it); hook-injected context uses `frameInbound`.
-- [ ] Delivery modes: `between` (default) via the hook, `manual`, and `live` via channels if available.
-- [ ] Desktop notifications for `requiresHuman` and direct questions.
-- [ ] `agentroom watch` terminal pane with input line; control characters stripped from rendered strings.
+- [x] `plugins/claude-code`: manifest bundling the MCP server, slash commands (`/sync`, `/say`, `/ask`, `/handoff`, `/send`, `/approve`, `/sync-mode`), `UserPromptSubmit` hook, status line script.
+- [x] Hook-based human sending with prompt blocking; draft-and-approve flow for `/ask` and `/handoff` (`/send <hash>` refuses when `pending.json` changed after display; test it); hook-injected context uses `frameInbound`.
+- [x] Delivery modes: `between` (default) via the hook, `manual`, and `live` via channels if available.
+- [x] Desktop notifications for `requiresHuman` and direct questions.
+- [x] `agentroom watch` terminal pane with input line; control characters stripped from rendered strings.
 
 **Accept:** a full day of real use on the client SDK without copy-pasting between agents; neither person missed a message that needed them.
+
+Status 2026-10-12: agent-checkable parts done (plugin validates with `claude plugin validate`; hook, release, delivery and status line covered end to end in `tests/conformance/test/claude-plugin.test.ts`). `live` delivery is deferred (channels research preview, `OPEN_QUESTIONS.md` item 8). The day of real use is waiting on Andrew.
 
 ## Milestone 4: Agnostic (week 4)
 
