@@ -15,6 +15,9 @@ Commands:
       Replies to the most recently updated thread unless --thread or --new is given.
   approve <thread> [--room <id>]
       Approve a thread blocked by the chain limit (needs an interactive terminal).
+  export [--thread <id>] [--format md|gh-issue] [--room <id>]
+      Write this room's local history as markdown (stdout), or as a GitHub issue body file
+      plus the gh command to run (needs an interactive terminal).
   down [--room <id>]
       Close the room now (creator only). Run \`agentroom export\` first if you need a record.
   install claude [--room <id>]
@@ -50,6 +53,11 @@ const OPTIONS = {
   },
   approve: { room: { type: "string" } },
   down: { room: { type: "string" } },
+  export: {
+    thread: { type: "string" },
+    format: { type: "string" },
+    room: { type: "string" },
+  },
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
 } satisfies Record<string, StringFlags>;
