@@ -30,7 +30,7 @@ Options:
   --version    Print the version.
 `;
 
-type StringFlags = Record<string, { type: "string" | "boolean" }>;
+type FlagSpec = Record<string, { type: "string" | "boolean" }>;
 
 const OPTIONS = {
   up: {
@@ -60,7 +60,7 @@ const OPTIONS = {
   },
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
-} satisfies Record<string, StringFlags>;
+} satisfies Record<string, FlagSpec>;
 
 export type CommandName = keyof typeof OPTIONS;
 
@@ -82,7 +82,7 @@ export function parseCli(argv: string[]): ParsedArgs {
   if (first === "--version" || first === "-v") {
     return { command: "version", positionals: [], values: {} };
   }
-  const options = (OPTIONS as Record<string, StringFlags | undefined>)[first];
+  const options = (OPTIONS as Record<string, FlagSpec | undefined>)[first];
   if (!options) throw new Error(`unknown command "${first}"`);
   const parsed = parseArgs({
     args: argv.slice(1),
