@@ -334,7 +334,9 @@ export class Room extends DurableObject<Env> {
       this.fail(ws, "bad_signature", "close signature did not verify");
       return;
     }
-    if (this.state !== state) return;
+    // The verify awaited: the room may have ended meanwhile. An alarm reloads `this.state` from
+    // storage, so compare the id, not the object.
+    if (this.state?.roomId !== state.roomId) return;
     await this.end("closed");
   }
 
