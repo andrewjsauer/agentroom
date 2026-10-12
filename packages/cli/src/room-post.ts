@@ -1,7 +1,7 @@
 import {
   agentroomHome,
   connectOnce,
-  RelayError,
+  type OnceSession,
   type RoomFile,
   replayQueue,
 } from "@agentroom/mcp";
@@ -17,6 +17,7 @@ import {
   type CliContext,
   CliError,
   forgetGoneRoom,
+  isGone,
   loadRoom,
 } from "./context.js";
 
@@ -37,33 +38,35 @@ export async function connectForPost(
   const home = agentroomHome(ctx.env);
   const { roomId, room } = loadRoom(roomFlag, ctx);
   const { key } = deriveRoom(parseShareCode(room.secret));
-  let once: Awaited<ReturnType<typeof connectOnce>>;
+  let once: OnceSession;
   try {
     once = await connectOnce({
       url: room.relay,
       hello: { t: "hello", room: roomId, proto: 1, since: 0 },
     });
   } catch (err) {
-    if (
-      err instanceof RelayError &&
-      (err.code === "room_not_found" || err.code === "room_expired")
-    ) {
+    if (isGone(err)) {
       throw new CliError(forgetGoneRoom(home, roomId, room.relay));
     }
     throw err;
   }
   const byId = new Map<string, { seq: number; env: Envelope }>();
+  const localSeqs = new Set<number>();
   for (const m of replayQueue(home, roomId).history) {
     byId.set(m.env.id, { seq: m.seq, env: m.env });
+    localSeqs.add(m.seq);
   }
-  for (const m of once.msgs) {
-    try {
-      const env = await open(m.blob, key, roomId);
-      byId.set(env.id, { seq: m.seq, env });
-    } catch {
-      // Undecryptable blobs are dropped.
-    }
-  }
+  const fetched = await Promise.all(
+    once.msgs
+      .filter((m) => !localSeqs.has(m.seq))
+      .map((m) =>
+        open(m.blob, key, roomId).then(
+          (env) => ({ seq: m.seq, env }),
+          () => undefined, // Undecryptable blobs are dropped.
+        ),
+      ),
+  );
+  for (const m of fetched) if (m) byId.set(m.env.id, m);
   const history = [...byId.values()]
     .sort((a, b) => a.seq - b.seq)
     .map((m) => m.env);
