@@ -63,4 +63,32 @@ Decisions:
 - Default relay URL is a placeholder constant until a relay is deployed; `AGENTROOM_RELAY` and `--relay` override it.
 - relay-node keeps everything in memory, so a redeploy ends every room; avoid redeploying mid-session during the human test.
 
-Next: M1 code review, then M2 (safe to use).
+Next: M2 (safe to use).
+
+## 2026-10-12: M1 review, M2 safe to use
+
+Completed:
+- M1 code review: five fixes (idle rooms expire on access, wider invariant-2 source scan, `join` prompt ends on EOF, usage text, test name).
+- M2 (commits `a66c033`..`bfbd2b3`): chain limit and secret scanner in `protocol`; signed creator-only `close` with close-only `hello`, tombstones, max age, rate limit and connection cap in `relay-node`; chain policy, room meta, `handoff`, drafts to `pending.json`, `agentroom-rules` prompt and closed/expired teardown in `mcp`; human-terminal guard, `say`, `approve`, `down`, `up --ttl`, `export` (md and gh-issue via `--body-file`) in `cli`; conformance tests for close, expiry, chain limit, scanner and the agent marker; README threat model. Review pass applied 23 findings (efficiency, reuse, dead exports, and test strength) and found no new defects.
+- Open questions 4-12 and 16 answered with dates and URLs (Claude Code plugin manifest, status line, `UserPromptSubmit` and `UserPromptExpansion` hooks, channels, Codex, Gemini, Cursor, Durable Object hibernation and alarms). UX.md updated: `/say` is intercepted by `UserPromptExpansion`, the status line is set through settings, `live` delivery is deferred.
+- M3 plan written and reviewed (`docs/plans/2026-10-12-0719-feat-m3-claude-code-plugin-plan.md`).
+
+Test status (orchestrator's own run):
+```
+packages/protocol test:    Tests  125 passed (125)
+packages/relay-node test:  Tests   30 passed (30)
+packages/mcp test:         Tests   67 passed (67)
+packages/cli test:         Tests   62 passed (62)
+tests/conformance test:    Tests   11 passed (11)
+packages/* and tests/conformance typecheck: Done
+biome check .  ->  Checked 88 files. No fixes applied.
+```
+
+Decisions:
+- Close-only connections are bounded at two per room, oldest evicted, rather than refused: a refusing cap would let a leaked share code lock the creator out of `down`.
+- `/say`, `/approve`, `/send` are plugin skills invoked as `/agentroom:<name>`; the plugin's `UserPromptExpansion` hook posts and blocks the expansion. `live` delivery via channels is deferred (research preview, allowlist-only, does not register SDK v2 servers).
+- Rooms are bound to the project directory they were opened in (`projectDir` in `room.json`); the `between` hook delivers only to sessions inside it.
+- `stripControl` also strips bidi overrides and isolates.
+- Agent markers that refuse `say`/`approve`/`export`: `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI`, `CURSOR_AGENT` (`OPEN_QUESTIONS.md` item 17). Open: `CLAUDECODE` also blocks a human typing in a Claude Code IDE terminal.
+
+Next: M3 (Claude Code plugin and humans).

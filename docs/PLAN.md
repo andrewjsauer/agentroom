@@ -38,16 +38,18 @@ Status 2026-10-11: agent-checkable acceptance met (155 tests across protocol, re
 
 ## Milestone 2: Safe to use (week 2)
 
-- [ ] Creator-only `down`: Ed25519 close key pinned at the creating `hello`, `close` signed over `room_id || nonce`; relay tests for wrong key, non-creator, and replay.
-- [ ] Chain limit in `protocol`, enforced in `mcp` `send`, with tests for reset on human message and on `approve`, `thread` derived from `replyTo`, presence ignored, and the room-wide counter catching a new-thread-per-message loop.
-- [ ] Secret scanner in `protocol` with fixtures; enforced in the shared seal-and-post path used by MCP `send`, hook, `watch` and CLI `say`, with a blocked-fake-AWS-key test per path.
-- [ ] `cli`: `say` and `approve` with TTY check and refusal when an agent environment marker is set (e.g. `CLAUDECODE`); `export` to markdown and `gh-issue` (body via `--body-file`, never inline; test with a `$(touch pwned)` body); `down`.
-- [ ] `handoff` tool with fixed template; `draft: true` on `send` and `handoff` writes `pending.json` and returns text plus hash.
-- [ ] Max age TTL, rate limit, member cap, `room_expired` handling end to end.
-- [ ] `agentroom-rules` MCP prompt.
-- [ ] Threat model section in README.
+- [x] Creator-only `down`: Ed25519 close key pinned at the creating `hello`, `close` signed over `room_id || nonce`; relay tests for wrong key, non-creator, and replay.
+- [x] Chain limit in `protocol`, enforced in `mcp` `send`, with tests for reset on human message and on `approve`, `thread` derived from `replyTo`, presence ignored, and the room-wide counter catching a new-thread-per-message loop.
+- [x] Secret scanner in `protocol` with fixtures; enforced in the shared seal-and-post path used by MCP `send`, hook, `watch` and CLI `say`, with a blocked-fake-AWS-key test per path.
+- [x] `cli`: `say` and `approve` with TTY check and refusal when an agent environment marker is set (e.g. `CLAUDECODE`); `export` to markdown and `gh-issue` (body via `--body-file`, never inline; test with a `$(touch pwned)` body); `down`.
+- [x] `handoff` tool with fixed template; `draft: true` on `send` and `handoff` writes `pending.json` and returns text plus hash.
+- [x] Max age TTL, rate limit, member cap, `room_expired` handling end to end.
+- [x] `agentroom-rules` MCP prompt.
+- [x] Threat model section in README.
 
 **Accept:** relay logs show only ciphertext; an agent cannot exceed the chain limit; a fake AWS key in a message is blocked; an agent running `agentroom say` from its shell fails; the MCP server has no code path that emits `agent: "human"`.
+
+Status 2026-10-12: each acceptance criterion has a passing test (relay-node invariant-1 test across create/put/close/expiry/rate_limited/room_full; mcp chain-policy and conformance chain tests; scanner tests on mcp send, drafts, cli say and the stdio path; cli human-guard tests and a conformance run of `say` with `CLAUDECODE=1`; the mcp source-scan finds one `"human"` literal, inside `refuseHuman`).
 
 ## Milestone 3: Claude Code plugin and humans (week 3)
 
