@@ -70,7 +70,7 @@ export interface RoomStatus {
 }
 
 /** The only `from` this server ever emits (invariant 2): the room's configured agent, via mcp. */
-export function buildFrom(room: RoomFile): {
+function buildFrom(room: RoomFile): {
   member: string;
   agent: AgentName;
   via: "mcp";
@@ -79,7 +79,7 @@ export function buildFrom(room: RoomFile): {
 }
 
 /** Peer-controlled display strings are stripped of control characters and bounded before display. */
-export function sanitizeName(s: string): string {
+function sanitizeName(s: string): string {
   return stripControl(s).slice(0, MAX_NAME_CHARS);
 }
 

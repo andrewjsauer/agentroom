@@ -27,7 +27,7 @@ export function mcpServerCommand(
 }
 
 /** Locate an executable by scanning PATH directories; no shell is involved. */
-export function findOnPath(
+function findOnPath(
   path: string | undefined,
   name: string,
 ): string | undefined {
@@ -50,7 +50,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** Register the room's MCP server with Claude Code, or fall back to a project `.mcp.json`. */
-export function installClaude(roomId: string, ctx: CliContext): number {
+function installClaude(roomId: string, ctx: CliContext): number {
   const { command, args } = mcpServerCommand(ctx.entryPath, roomId);
   const claude = findOnPath(ctx.env.PATH, "claude");
   if (claude) {
