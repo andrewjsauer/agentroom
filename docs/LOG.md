@@ -36,3 +36,31 @@ Decisions:
 - `engines.node >=20.19` because vitest 3 resolves vite 7.
 
 Next: M1 (core loop, encrypted).
+
+## 2026-10-11: M1 core loop, encrypted
+
+Completed (commits `1852c5a`..`9d2dceb`):
+- `protocol`: Envelope, wire and meta schemas; ULID (own 21-line implementation); `ar1_` share codes with strict parse; HKDF via `node:crypto`; XChaCha20-Poly1305 seal/open with room_id as associated data; Ed25519 close keypair; `frameInbound` with per-call random tag suffix and escaping.
+- `relay-node`: `startRelay`, create-vs-join `hello`, 500-envelope buffer, seq, `since` resume, presence counts, 64 KiB limit, idle expiry, `close` rejected until M2, no-plaintext test.
+- `mcp`: state store under `AGENTROOM_HOME` (`room.json` 0600, append-only `queue.jsonl`, `status.json`, `current`), reconnecting relay client with resume and one-shot mode, session with `room_status`, `send`, `inbox`, `wait` (abort-aware), structural invariant-2 guard plus a source-scan test, expiry teardown, stdio runner that exits when stdin closes.
+- `cli`: `up`, `join` (TTY prompt when the code is omitted), `status`, `mcp`, `install claude` (`claude mcp add --scope user` or a project `.mcp.json` fallback), `agentroom` bin; CLI parsing with `node:util.parseArgs` (commander 15 needs Node 22.12+).
+- `tests/conformance`: two real `agentroom mcp` processes over stdio against an in-process relay: presence, question and answer, resume after a forced disconnect, no plaintext in the relay, `room_status` framing.
+
+Test status (orchestrator's own run):
+```
+packages/protocol test:    Test Files  7 passed (7)   Tests  67 passed
+packages/relay-node test:  Test Files  1 passed (1)   Tests  18 passed
+packages/mcp test:         Test Files  4 passed (4)   Tests  36 passed
+packages/cli test:         Test Files  6 passed (6)   Tests  28 passed
+tests/conformance test:    Test Files  1 passed (1)   Tests   6 passed
+packages/* and tests/conformance typecheck: Done
+biome check .  ->  Checked 66 files in 10ms. No fixes applied.
+```
+
+Decisions:
+- The M1 build was interrupted twice by an Opus usage cap; U7-U10 were finished on a resumed run. From here on every subagent runs on Opus 5.5 (orchestrator prompt rule).
+- `install claude` writes `node <abs path to dist/bin.js>` when running from a checkout and `npx -y agentroom` only from an installed package, because the npm name is not published yet (plan KTD15).
+- Default relay URL is a placeholder constant until a relay is deployed; `AGENTROOM_RELAY` and `--relay` override it.
+- relay-node keeps everything in memory, so a redeploy ends every room; avoid redeploying mid-session during the human test.
+
+Next: M1 code review, then M2 (safe to use).

@@ -21,16 +21,18 @@ Goal: two Claude Code sessions on two machines exchange a real question.
 
 Encryption is in M1, not M2, because the M1 real-world test runs through a deployed relay, and invariant 1 says the relay never sees plaintext. With libsodium it is a small task.
 
-- [ ] `protocol`: `Envelope` schema, relay wire schemas, ULID ids, share-code generate and parse.
-- [ ] `protocol` crypto: HKDF room_id and key derivation, XChaCha20-Poly1305 envelopes, associated data = room_id. Tests: round trip, tamper, wrong key, wrong room.
-- [ ] `relay-node`: create vs join `hello` (room settings and close key pinned at creation, `room_not_found` for unknown ids), bounded buffer, seq numbers, resume with `since`, idle TTL, size limit.
-- [ ] `mcp`: stdio server with `room_status`, `send`, `inbox`, `wait`; local room directory (`room.json`, `queue.jsonl`, `status.json`); rebuild history from `since=0` on startup; reconnect with backoff; drop envelopes whose id was already seen (relay replay).
-- [ ] `cli`: `up`, `join`, `status`, `install claude` (writes MCP config via `claude mcp add` or settings, whichever is current).
-- [ ] Inbound framing as untrusted data (`frameInbound` in `protocol`, nonce-suffixed tag, escaping, tamper tests) used by `inbox` and `wait` results.
-- [ ] Conformance test: two scripted MCP clients against a local relay exchange messages, resume after disconnect, see each other's presence, and the relay's stored blobs contain no plaintext.
+- [x] `protocol`: `Envelope` schema, relay wire schemas, ULID ids, share-code generate and parse.
+- [x] `protocol` crypto: HKDF room_id and key derivation, XChaCha20-Poly1305 envelopes, associated data = room_id. Tests: round trip, tamper, wrong key, wrong room.
+- [x] `relay-node`: create vs join `hello` (room settings and close key pinned at creation, `room_not_found` for unknown ids), bounded buffer, seq numbers, resume with `since`, idle TTL, size limit.
+- [x] `mcp`: stdio server with `room_status`, `send`, `inbox`, `wait`; local room directory (`room.json`, `queue.jsonl`, `status.json`); rebuild history from `since=0` on startup; reconnect with backoff; drop envelopes whose id was already seen (relay replay).
+- [x] `cli`: `up`, `join`, `status`, `install claude` (writes MCP config via `claude mcp add` or settings, whichever is current).
+- [x] Inbound framing as untrusted data (`frameInbound` in `protocol`, nonce-suffixed tag, escaping, tamper tests) used by `inbox` and `wait` results.
+- [x] Conformance test: two scripted MCP clients against a local relay exchange messages, resume after disconnect, see each other's presence, and the relay's stored blobs contain no plaintext.
 - [ ] Deploy `relay-node` somewhere reachable for the real test (Fly.io, Railway, or a small VM behind TLS). **Human step:** needs a hosting account.
 
 **Accept (agent-checkable):** `pnpm -r build && pnpm -r test` green, including the conformance test.
+
+Status 2026-10-11: agent-checkable acceptance met (155 tests across protocol, relay-node, mcp, cli and the conformance package). Relay deployment and the two-person test are waiting on Andrew (`LOG.md`).
 
 **Accept (human step):** Andrew and coworker each run Claude Code, one asks a question about the other's platform, the other's agent answers via `inbox`, and the answer arrives. Recorded in `docs/LOG.md`.
 
