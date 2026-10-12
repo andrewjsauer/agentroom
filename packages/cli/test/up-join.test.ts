@@ -67,14 +67,14 @@ test("up creates the room, writes room.json (0600) and current, and prints the c
   expect(t.out()).toContain(`mcp --room ${roomId}`);
 });
 
-test("up with the default relay prints a join command without --relay", async () => {
+test("up uses AGENTROOM_RELAY when --relay is absent and names it in the join command", async () => {
   const h = home();
   const t = makeCtx(h, { env: { AGENTROOM_RELAY: relay.url } });
   expect(await main(["up"], t.ctx)).toBe(0);
   const code = codeFrom(t.out());
   expect(t.out()).toContain(`agentroom join ${code} --relay ${relay.url}`);
   const t2 = makeCtx(home());
-  // The default constant has no relay behind it, so the join command omits --relay only then.
+  // Only the default constant omits --relay; no relay runs there, so that branch has no test.
   expect(await main(["up", "--relay", relay.url], t2.ctx)).toBe(0);
   expect(t2.out()).toContain("--relay");
 });
