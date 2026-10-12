@@ -69,7 +69,7 @@ Creating and joining are distinct. Only `up` sends `hello` with `create`; the re
 
 `close` is accepted only when `sig` verifies under the pinned `closeKey` over `room_id || nonce`, where `nonce` is issued per connection in `welcome`, so a captured `close` cannot be replayed. The relay sends `closed` to every connection, closes them, deletes the room, and tombstones the id until `createdAt + maxAge`; any `hello` for a tombstoned id, with or without `create`, gets `room_expired` ("room was closed or expired"), so `room_not_found` keeps meaning "never existed or the relay restarted". A wrong key, replayed nonce or malformed signature gets `bad_signature` and the room survives.
 
-A `hello` may carry `closeOnly: true` (not combined with `create` or `since`). Such a connection skips the connection cap, gets a `welcome` with a nonce, is not counted or broadcast to, and may send only `close`; any other frame gets `bad_proto`, and the relay closes it after 10 s without a `close`. This lets a creator close a room whose cap is full.
+A `hello` may carry `closeOnly: true` (not combined with `create` or `since`). Such a connection skips the connection cap, gets a `welcome` with a nonce, is not counted or broadcast to, and may send only `close`; any other frame gets `bad_proto`, and the relay closes it after 10 s without a `close`. A room holds at most two close-only connections; a third evicts the oldest with `room_full`, so holders of the room ID cannot pile up sockets and timers, and cannot lock the creator out either. This lets a creator close a room whose cap is full.
 
 Wire behavior fixed in milestone 1 (both relays must match it):
 

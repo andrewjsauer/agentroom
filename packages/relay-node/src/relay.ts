@@ -15,6 +15,7 @@ export type RelayEvent =
   | { event: "room_expired"; room: string }
   | { event: "room_closed"; room: string }
   | { event: "conn_open"; room: string; members: number }
+  | { event: "closer_open"; room: string }
   | { event: "conn_close"; room: string; members: number }
   | { event: "error"; code: ErrorCode };
 
@@ -29,6 +30,8 @@ export interface RelayOptions {
   maxAgeSec?: number;
   /** Connections per room, close-only connections excepted (default 8). */
   maxMembers?: number;
+  /** Close-only connections held per room; a new one evicts the oldest (default 2). */
+  maxClosers?: number;
   /** Token bucket on `put`, per connection (default burst 20, refill 2/s). */
   rateLimit?: { burst: number; perSec: number };
   /** How long a close-only connection may wait before sending `close` (default 10 s). */
@@ -69,6 +72,7 @@ interface Conn {
   room?: Room;
   nonce?: string;
   closeOnly: boolean;
+  graceTimer?: NodeJS.Timeout;
   tokens: number;
   refilledAt: number;
 }
@@ -89,6 +93,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const host = opts.host ?? "127.0.0.1";
   const maxAgeSec = opts.maxAgeSec ?? 86_400;
   const maxMembers = opts.maxMembers ?? 8;
+  const maxClosers = opts.maxClosers ?? 2;
   const rateLimit = opts.rateLimit ?? { burst: 20, perSec: 2 };
   const rooms = new Map<string, Room>();
   /** Closed or expired room ids, remembered until createdAt + maxAge (KTD7). */
@@ -217,30 +222,33 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       );
       return;
     }
-    const nonce = randomBytes(16).toString("base64");
-    conn.room = room;
-    conn.nonce = nonce;
-    if (hello.closeOnly) {
-      conn.closeOnly = true;
-      room.closers.add(ws);
-      send(ws, {
-        t: "welcome",
-        seq: room.state.seq,
-        members: room.conns.size,
-        expiresAt: expiresAt(room),
-        nonce,
-        meta: room.state.meta,
-      });
-      setTimeout(() => ws.close(), opts.closeGraceMs ?? 10_000).unref();
-      return;
-    }
-    if (room.conns.size >= maxMembers) {
-      conn.room = undefined;
+    if (!hello.closeOnly && room.conns.size >= maxMembers) {
       fail(ws, "room_full", "room is at its connection cap");
       return;
     }
-    room.state.lastActivity = now();
-    room.conns.add(ws);
+    if (hello.closeOnly && room.closers.size >= maxClosers) {
+      // Evict the oldest closer rather than refuse: a leaked share code must not be able to block close.
+      const [oldest] = room.closers;
+      if (oldest) {
+        room.closers.delete(oldest);
+        fail(oldest, "room_full", "replaced by a newer close-only connection");
+      }
+    }
+    const nonce = randomBytes(16).toString("base64");
+    conn.room = room;
+    conn.nonce = nonce;
+    conn.closeOnly = hello.closeOnly === true;
+    if (conn.closeOnly) {
+      room.closers.add(ws);
+      conn.graceTimer = setTimeout(
+        () => ws.close(),
+        opts.closeGraceMs ?? 10_000,
+      );
+      conn.graceTimer.unref();
+    } else {
+      room.state.lastActivity = now();
+      room.conns.add(ws);
+    }
     send(ws, {
       t: "welcome",
       seq: room.state.seq,
@@ -249,6 +257,10 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       nonce,
       meta: room.state.meta,
     });
+    if (conn.closeOnly) {
+      log({ event: "closer_open", room: hello.room });
+      return;
+    }
     if (hello.since !== undefined) {
       for (const e of room.state.buffer) {
         if (e.seq > hello.since) send(ws, { t: "msg", ...e });
@@ -327,13 +339,14 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         return;
       }
       conn.tokens -= 1;
-      if (Buffer.from(frame.blob, "base64").length > maxEnvelopeBytes) {
+      if (Buffer.byteLength(frame.blob, "base64") > maxEnvelopeBytes) {
         fail(ws, "too_large", "envelope exceeds 64 KiB", false);
         return;
       }
       put(room, frame.blob);
     });
     ws.on("close", () => {
+      clearTimeout(conn.graceTimer);
       const room = conn.room;
       room?.closers.delete(ws);
       if (!room?.conns.delete(ws)) return;
