@@ -210,6 +210,8 @@ Claude Code push: if channels are available, the MCP server also declares the ch
 - Regex set adapted from gitleaks default rules (AWS keys, GitHub tokens, Slack tokens, private key headers, JWTs, generic high-entropy `key=`/`token=`/`secret=` assignments, Google API keys, Stripe keys).
 - Runs inside the shared seal-and-post path used by every sender (MCP `send`, hook, `watch`, CLI `say`), on `body` and on ref fields, so a human pasting a token is blocked too.
 - Block, do not redact: return the rule name and a short explanation so the agent rewrites the message.
+- Placement: `seal` in `protocol` calls the scanner after schema validation and before encryption, so every sender is covered structurally; `sealMeta` is not scanned. The MCP draft path does not seal and calls the same scan directly. A match throws `SecretFoundError` with `rule`, `field` (`body` or `refs[i].repo|path|lines|commit`) and an explanation; the matched text never appears in the error.
+- Rules: `aws-access-key-id`, `aws-secret-access-key` (git-secrets pattern), `github-pat`, `github-oauth`, `github-app-token`, `github-refresh-token`, `github-fine-grained-pat`, `slack-token`, `slack-app-token`, `private-key` (header line alone), `jwt`, `gcp-api-key`, `stripe-live-key` (test keys pass), and `generic-assignment` (case-insensitive keyword with suffix, optional `: Type`, a 20-150 character value with a digit, not dotted/underscored word segments, Shannon entropy above 3.5 bits per character, name not an allowlisted shape such as `keyAlias` or `tokenUrl`). Porting notes in `docs/OPEN_QUESTIONS.md`.
 - Unit tests with positive and negative fixtures; keep false positives low on normal Kotlin and Swift snippets.
 
 ## Failure handling

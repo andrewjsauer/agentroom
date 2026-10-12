@@ -3,6 +3,7 @@ import sodium from "libsodium-wrappers";
 import type { z } from "zod";
 import { Envelope, type EnvelopeInput } from "./envelope.js";
 import { RoomMeta } from "./meta.js";
+import { assertNoSecrets } from "./secrets.js";
 
 const NONCE_BYTES = 24;
 const TAG_BYTES = 16;
@@ -82,13 +83,18 @@ async function openJson<T>(
   return parsed.data;
 }
 
-/** Validate and encrypt an envelope; blob = base64(nonce || ciphertext), room id as AD. */
+/**
+ * Validate, scan for secrets (invariant 4), and encrypt an envelope.
+ * blob = base64(nonce || ciphertext), room id as AD. Every sender goes through here.
+ */
 export async function seal(
   envelope: EnvelopeInput,
   key: Uint8Array,
   roomId: string,
 ): Promise<string> {
-  return sealJson(Envelope.parse(envelope), key, roomId);
+  const env = Envelope.parse(envelope);
+  assertNoSecrets(env);
+  return sealJson(env, key, roomId);
 }
 
 export function open(
