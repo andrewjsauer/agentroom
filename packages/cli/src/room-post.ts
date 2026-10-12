@@ -10,6 +10,7 @@ import {
   type Envelope,
   type EnvelopeInput,
   open,
+  openMeta,
   parseShareCode,
   seal,
 } from "@agentroom/protocol";
@@ -25,6 +26,8 @@ export interface PostSession {
   room: RoomFile;
   /** Relay replay merged with the local queue, deduped by id, in seq order (KTD20). */
   history: Envelope[];
+  /** The room's chain limit from the welcome meta (3 when it does not decrypt). */
+  maxAgentChain: number;
   /** Seal (which scans for secrets) and post; resolves with the echo seq. */
   post(env: EnvelopeInput): Promise<number>;
   end(): void;
@@ -70,9 +73,14 @@ export async function connectForPost(
   const history = [...byId.values()]
     .sort((a, b) => a.seq - b.seq)
     .map((m) => m.env);
+  const maxAgentChain = await openMeta(once.welcome.meta, key, roomId).then(
+    (m) => m.maxAgentChain,
+    () => 3,
+  );
   return {
     room,
     history,
+    maxAgentChain,
     async post(env) {
       return once.put(await seal(env, key, roomId));
     },

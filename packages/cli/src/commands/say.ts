@@ -22,6 +22,25 @@ function lastOf(history: Envelope[], thread?: string): Envelope | undefined {
   return undefined;
 }
 
+/**
+ * Where a human message goes (KTD20): a new thread with `isNew`, else the latest message of
+ * `thread` (which must exist) or of the whole room; a new thread when the room is empty.
+ */
+export function sayTarget(
+  history: Envelope[],
+  id: string,
+  opts: { thread?: string; isNew: boolean },
+): { thread: string; replyTo?: string } {
+  if (opts.isNew) return { thread: id };
+  const target =
+    opts.thread === undefined
+      ? lastOf(history)
+      : lastOf(history, resolveThread({ id, thread: opts.thread }, history));
+  return target
+    ? { thread: target.thread, replyTo: target.id }
+    : { thread: id };
+}
+
 /** Post the user's own words, tagged human (KTD20). Replies to the latest thread by default. */
 export async function say(
   positionals: string[],
@@ -38,21 +57,10 @@ export async function say(
   const s = await connectForPost(values.room, ctx);
   try {
     const id = ulid();
-    let thread = id;
-    let replyTo: string | undefined;
-    if (values.new === undefined) {
-      const target =
-        values.thread === undefined
-          ? lastOf(s.history)
-          : lastOf(
-              s.history,
-              resolveThread({ id, thread: values.thread }, s.history),
-            );
-      if (target) {
-        thread = target.thread;
-        replyTo = target.id;
-      }
-    }
+    const { thread, replyTo } = sayTarget(s.history, id, {
+      thread: values.thread,
+      isNew: values.new !== undefined,
+    });
     const seq = await s.post({
       v: 1,
       id,

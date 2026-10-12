@@ -102,6 +102,11 @@ test("the human builder is used only by the human input paths", () => {
       literals.push(e.name);
     }
   }
-  expect(users.sort()).toEqual(["commands/approve.ts", "commands/say.ts"]);
+  expect(users.sort()).toEqual([
+    "commands/approve.ts",
+    "commands/say.ts",
+    "hook/expansion.ts",
+    "hook/release.ts",
+  ]);
   expect(literals).toEqual([]);
 });
