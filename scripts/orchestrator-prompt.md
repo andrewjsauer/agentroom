@@ -12,6 +12,8 @@ You plan, decide, and verify. You do not write product code yourself. Hand imple
 
 If a subagent cannot invoke a skill, have it follow the same steps directly.
 
+Every Agent tool call must pass `model: "opus"` (Claude Opus 5.5). Never launch a subagent on Fable, even after an error or usage-limit interruption; Fable is for orchestration only.
+
 ## Sequence
 
 1. Commit the current docs as the initial commit on `main`.

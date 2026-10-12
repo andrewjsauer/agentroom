@@ -9,6 +9,8 @@ cd "$(dirname "$0")/.."
 set -a; source .env; set +a
 : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY missing from .env}"
 export CLAUDE_CODE_SUBAGENT_MODEL=claude-opus-5-5
+# Skills' own agents that ask for "sonnet" also run on Opus 5.5.
+export ANTHROPIC_DEFAULT_SONNET_MODEL=claude-opus-5-5
 
 mkdir -p build-logs
 log="build-logs/$(date +%Y%m%d-%H%M%S).jsonl"
@@ -17,7 +19,7 @@ prompt="$(cat scripts/orchestrator-prompt.md)"
 resume_args=()
 if [[ -n "${RESUME:-}" ]]; then
   resume_args=(--resume "$RESUME")
-  prompt="Continue the build from where you stopped. Re-read docs/PLAN.md and docs/LOG.md to see what is done."
+  prompt="Continue the build from where you stopped. Re-read docs/PLAN.md, docs/LOG.md, git log, and scripts/orchestrator-prompt.md (it has a new rule: every Agent call passes model: \"opus\"; never run subagents on Fable)."
 fi
 
 echo "Logging to $log"
