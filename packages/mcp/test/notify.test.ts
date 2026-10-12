@@ -187,7 +187,7 @@ describe("session notifications", () => {
       from: { member: "alice", agent: "codex", via: "mcp" },
     });
     await until(() => (relay.snapshot(room.roomId)?.seq ?? 0) >= 7);
-    await until(() => s.status().unread >= 3);
+    await until(() => s.status().unread === 4);
     await sleep(50);
     expect(got).toEqual([
       ["agentroom: bob needs you", "hello"],

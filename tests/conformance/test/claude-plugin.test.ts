@@ -204,13 +204,11 @@ test("the status line shows alice's unread count", async () => {
     () => (readStatus(homeA, roomId)?.unread ? true : undefined),
     "alice to have unread messages",
   );
-  const unread = readStatus(homeA, roomId)?.unread;
+  // The count can still grow while bob's last send lands, so only its shape is pinned.
   const r = await runLauncher(["statusline"], fixture("statusline.json"));
   expect(r.code).toBe(0);
   expect(r.out).toMatch(
-    new RegExp(
-      `^agentroom \\* [0-9a-f]{8} \\| other project \\| ${unread} unread`,
-    ),
+    /^agentroom \* [0-9a-f]{8} \| other project \| [1-9]\d* unread/,
   );
 });
 
