@@ -2,8 +2,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -108,10 +110,14 @@ function applyAll(
     if (after === "") {
       rmSync(file, { force: true });
     } else {
-      mkdirSync(dirname(file), { recursive: true });
-      const tmp = `${file}.agentroom-tmp`;
-      writeFileSync(tmp, after);
-      renameSync(tmp, file);
+      // Write through a symlink and keep the mode: these files can hold other servers' secrets.
+      const exists = existsSync(file);
+      const target = exists ? realpathSync(file) : file;
+      const mode = exists ? statSync(target).mode & 0o777 : undefined;
+      mkdirSync(dirname(target), { recursive: true });
+      const tmp = `${target}.agentroom-tmp`;
+      writeFileSync(tmp, after, { mode });
+      renameSync(tmp, target);
     }
     changed.push(`${after === "" ? "Removed" : "Updated"} ${file}`);
   }

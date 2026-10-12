@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { main } from "../src/index.js";
@@ -98,4 +106,19 @@ test("install bogus exits 2 with usage; uninstall with nothing installed exits 0
   const u = makeCtx(t.ctx.env.HOME as string, { cwd: t.ctx.cwd });
   expect(await main(["uninstall", "gemini"], u.ctx)).toBe(0);
   expect(u.out()).toContain("Nothing to remove");
+});
+
+test("install writes through a symlinked config and keeps its mode", async () => {
+  const { home, repo, t } = setup();
+  const real = join(repo, "dotfiles-config.toml");
+  writeFileSync(real, '[mcp_servers.other.env]\nAPI_KEY = "x"\n', {
+    mode: 0o600,
+  });
+  mkdirSync(join(home, ".codex"));
+  const link = join(home, ".codex", "config.toml");
+  symlinkSync(real, link);
+  expect(await main(["install", "codex"], t.ctx)).toBe(0);
+  expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  expect(readFileSync(real, "utf8")).toContain("[mcp_servers.agentroom]");
+  expect(statSync(real).mode & 0o777).toBe(0o600);
 });
