@@ -147,7 +147,11 @@ For a thread, count consecutive envelopes of kind `question`, `answer`, `decisio
 
 The receiving side also renders the thread as "waiting on a human" so both people see it.
 
-Two rules stop agents from sidestepping the per-thread count. First, `send` derives `thread` from the `replyTo` envelope when `thread` is omitted and rejects a mismatch, so a reply cannot start a fresh thread. Second, a room-wide counter of consecutive agent-authored envelopes across all threads, reset by any human envelope, makes `send` refuse at `2 * maxAgentChain` (twice the per-thread limit so two parallel threads can still progress, while a loop that opens a new thread per message is stopped). Both rules have regression tests. Counts come from relay history, which the MCP server rebuilds from `since=0` on startup, so restarting a session does not reset them.
+Two rules stop agents from sidestepping the per-thread count. First, `send` derives `thread` from the `replyTo` envelope when `thread` is omitted and rejects a mismatch, so a reply cannot start a fresh thread. Second, a room-wide counter of consecutive agent-authored envelopes across all threads, reset by any human envelope, makes `send` refuse at `2 * maxAgentChain` (twice the per-thread limit so two parallel threads can still progress, while a loop that opens a new thread per message is stopped). The room-wide refusal reads "This room needs a human. N agent messages in a row across threads without a human reply. Ask your user to respond with /say or approve with /approve." Both refusals end with a line naming the CLI equivalents: "Outside Claude Code: agentroom say --thread <thread> \"...\" or agentroom approve <thread>."
+
+Thread resolution rejects unknown ids instead of starting a new thread: a `replyTo` must name a known non-`presence` envelope ("replyTo <id> is not a message in this room; call inbox to see message ids."), a `thread` that differs from the parent's is rejected ("thread <id> does not match the thread of replyTo <id> (<parent thread>)."), and a `thread` given alone must already exist ("thread <id> is not a thread in this room; omit thread to start a new one."). With neither, the message starts a new thread (`thread = id`). Ids in errors are stripped of control characters and truncated to 64 characters.
+
+Both rules have regression tests. Counts come from relay history, which the MCP server rebuilds from `since=0` on startup, so restarting a session does not reset them.
 
 ## MCP server
 
