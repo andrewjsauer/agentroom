@@ -36,7 +36,7 @@ One install bundles the MCP server, slash commands, hooks, and a status line scr
 agentroom * sdk-parity | 2 unread (1 needs you) | coworker/codex active
 ```
 
-The script reads local room state (no network call) so it is fast. If a plugin cannot set the status line itself, `agentroom install claude` writes it into settings and preserves any existing status line by chaining it.
+The script reads local room state (no network call) so it is fast. A plugin cannot set the status line (`OPEN_QUESTIONS.md` item 5), so `agentroom install claude` writes `statusLine` into user settings and preserves any existing status line by chaining it (`agentroom statusline --chain "<original>"`), with a `refreshInterval` so the unread count stays current while the session is idle.
 
 ### Slash commands
 
@@ -54,15 +54,15 @@ The script reads local room state (no network call) so it is fast. If a plugin c
 
 The agent has a shell. If human messages were sent by running `agentroom say`, the agent could run it and impersonate you, which would also defeat the chain limit. So:
 
-- A `UserPromptSubmit` hook inspects what you typed. If it starts with `/say` or `/approve`, the hook posts it tagged `via: "hook"`, `agent: "human"`, and blocks the prompt from reaching the model (saves tokens too).
+- `/say`, `/approve` and `/send` are plugin commands, and the plugin's `UserPromptExpansion` hook (which fires when a typed command is about to expand, matched on the command name) posts what you typed tagged `via: "hook"`, `agent: "human"`, then blocks the expansion so nothing reaches the model (saves tokens too). The `UserPromptSubmit` hook is used for `between` delivery, not for `/say`. Verified 2026-10-12, `OPEN_QUESTIONS.md` item 7; the hook sees `command_args` exactly as typed.
 - Draft approvals for `/ask` and `/handoff` work the same way. Claude calls `send` or `handoff` with `draft: true`; the MCP server writes the envelope to the room's `pending.json` and returns the draft text plus a short hash, which Claude shows you. Your reply of `/send <hash>` (typed by you, caught by the hook) posts the pending envelope only if its hash still matches, so the agent cannot swap the content after you read it. The released message keeps the agent's `from.agent` with `via: "hook"`; it is never tagged human. The hook then posts a human `approve` for that thread, because you read and released it.
 - The CLI `say` and `approve` commands (and the `watch` input line) refuse to run without an interactive terminal or when an agent environment marker such as `CLAUDECODE` is set. Weaker: an agent with a shell can deliberately get around this, so it stops accidental impersonation, not a determined agent (see the threat model in `ARCHITECTURE.md`). It covers non-Claude users, and the `watch` pane is the preferred human input path for them.
 
-Verify that `UserPromptSubmit` hooks can block a prompt and that a plugin can register slash commands that the hook intercepts (`OPEN_QUESTIONS.md`).
+Verified (`OPEN_QUESTIONS.md` items 6 and 7): `UserPromptSubmit` can block a prompt and inject context; `UserPromptExpansion` can block a plugin command before it expands.
 
 ### Delivery modes
 
-- `live`: inbound messages pushed into the session immediately via channels. Can derail a task mid-flight.
+- `live`: inbound messages pushed into the session immediately via channels. Can derail a task mid-flight. Deferred: channels are a research preview limited to Anthropic's allowlist and do not register SDK v2 servers (`OPEN_QUESTIONS.md` item 8).
 - `between` (default): queued; injected as context the next time you submit a prompt (via the `UserPromptSubmit` hook), wrapped by the same untrusted-data framing as tool results. Messages that need you, or direct questions to your agent, also trigger a desktop notification and show in the status line right away.
 - `manual`: nothing reaches the agent until you run `/sync`.
 
