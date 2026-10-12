@@ -1,15 +1,14 @@
-import type { Envelope } from "./envelope.js";
+import { type Envelope, EnvelopeKind } from "./envelope.js";
 import { stripControl } from "./frame.js";
 
-const COUNTED = new Set(["question", "answer", "decision", "handoff", "fyi"]);
+/** Kinds that count toward the chain: everything an agent can send. */
+const COUNTED = new Set<EnvelopeKind>(
+  EnvelopeKind.exclude(["approve", "presence"]).options,
+);
 
 /** Strip control characters and cap length before an id appears in an error. */
 function safeId(id: string): string {
   return stripControl(id).slice(0, 64);
-}
-
-export class ThreadError extends Error {
-  override name = "ThreadError";
 }
 
 /**
@@ -25,12 +24,12 @@ export function resolveThread(
       (e) => e.id === candidate.replyTo && e.kind !== "presence",
     );
     if (!parent) {
-      throw new ThreadError(
+      throw new Error(
         `replyTo ${safeId(candidate.replyTo)} is not a message in this room; call inbox to see message ids.`,
       );
     }
     if (candidate.thread !== undefined && candidate.thread !== parent.thread) {
-      throw new ThreadError(
+      throw new Error(
         `thread ${safeId(candidate.thread)} does not match the thread of replyTo ${safeId(candidate.replyTo)} (${safeId(parent.thread)}).`,
       );
     }
@@ -41,7 +40,7 @@ export function resolveThread(
       (e) => e.kind !== "presence" && e.thread === candidate.thread,
     );
     if (!known) {
-      throw new ThreadError(
+      throw new Error(
         `thread ${safeId(candidate.thread)} is not a thread in this room; omit thread to start a new one.`,
       );
     }
