@@ -1,4 +1,6 @@
+export * from "./handoff.js";
 export * from "./paths.js";
+export * from "./pending.js";
 export * from "./relay-client.js";
 export * from "./server.js";
 export * from "./session.js";

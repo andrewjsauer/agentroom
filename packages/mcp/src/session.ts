@@ -1,4 +1,5 @@
 import {
+  assertNoSecrets,
   chainRefusalText,
   chainState,
   checkChain,
@@ -17,6 +18,7 @@ import {
   waitingThreads,
 } from "@agentroom/protocol";
 import { agentroomHome } from "./paths.js";
+import { writePending } from "./pending.js";
 import {
   type ConnectionState,
   type GoneCode,
@@ -92,13 +94,22 @@ export interface RoomStatus {
   roomAgentRun: { count: number; limit: number };
 }
 
-/** The only `from` this server ever emits (invariant 2): the room's configured agent, via mcp. */
-function buildFrom(room: RoomFile): {
-  member: string;
-  agent: AgentName;
-  via: "mcp";
-} {
-  return { member: room.member, agent: room.agent, via: "mcp" };
+/**
+ * The only `from` this server ever emits (invariant 2): the room's configured agent.
+ * `via` is "mcp" for posts and "hook" for drafts, which the M3 hook releases unchanged.
+ */
+function buildFrom(
+  room: RoomFile,
+  via: "mcp" | "hook" = "mcp",
+): { member: string; agent: AgentName; via: "mcp" | "hook" } {
+  return { member: room.member, agent: room.agent, via };
+}
+
+/** Invariant 2 runtime guard, applied to every post and draft. */
+function refuseHuman(env: Envelope): void {
+  if ((env.from.agent as string) === "human") {
+    throw new Error("the MCP server never sends as a human");
+  }
 }
 
 /** Peer-controlled display strings are stripped of control characters and bounded before display. */
@@ -112,6 +123,8 @@ export interface RoomSession {
   room: RoomFile;
   status(): RoomStatus;
   send(input: SendInput): Promise<{ id: string; seq: number }>;
+  /** Resolve the thread, scan, and write pending.json instead of posting (KTD16). No chain check. */
+  draft(input: SendInput): { env: Envelope; hash: string };
   inbox(opts?: { thread?: string; limit?: number }): string;
   /** Resolves with framed messages, a timeout notice, or the cancel notice when `signal` aborts. */
   wait(timeoutSec: number, signal?: AbortSignal): Promise<string>;
@@ -218,9 +231,7 @@ export function createRoomSession(opts: {
 
   /** The single seal path for outbound envelopes. Refuses a human tag (invariant 2). */
   const sealOutbound = (env: Envelope): Promise<string> => {
-    if ((env.from.agent as string) === "human") {
-      throw new Error("the MCP server never sends as a human");
-    }
+    refuseHuman(env);
     return seal(env, key, roomId);
   };
 
@@ -364,6 +375,29 @@ export function createRoomSession(opts: {
     onState: () => persistStatus(),
   });
 
+  /** Gone check, thread resolution (KTD2), then the envelope with the non-human `from`. */
+  const build = (input: SendInput, via: "mcp" | "hook"): Envelope => {
+    if (gone) throw new Error(goneText());
+    const id = ulid();
+    const thread = resolveThread(
+      { id, thread: input.thread, replyTo: input.replyTo },
+      ordered(),
+    );
+    return Envelope.parse({
+      v: 1,
+      id,
+      ts: Date.now(),
+      from: buildFrom(session.room, via),
+      kind: input.kind,
+      thread,
+      replyTo: input.replyTo,
+      to: input.to,
+      body: input.body,
+      refs: input.refs ?? [],
+      requiresHuman: input.requiresHuman ?? false,
+    });
+  };
+
   const inbox = (o: { thread?: string; limit?: number } = {}): string => {
     if (gone && finalReadDone) return goneText();
     const all = unreadMessages().filter(
@@ -402,35 +436,25 @@ export function createRoomSession(opts: {
     inbox,
     send(input) {
       const run = async () => {
-        if (gone) throw new Error(goneText());
         await metaReady;
-        const id = ulid();
-        const past = ordered();
-        const thread = resolveThread(
-          { id, thread: input.thread, replyTo: input.replyTo },
-          past,
+        const env = build(input, "mcp");
+        const refusal = checkChain(
+          chainState(ordered(), maxAgentChain),
+          env.thread,
         );
-        const env = Envelope.parse({
-          v: 1,
-          id,
-          ts: Date.now(),
-          from: buildFrom(session.room),
-          kind: input.kind,
-          thread,
-          replyTo: input.replyTo,
-          to: input.to,
-          body: input.body,
-          refs: input.refs ?? [],
-          requiresHuman: input.requiresHuman ?? false,
-        });
-        const refusal = checkChain(chainState(past, maxAgentChain), thread);
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
-        return { id, seq };
+        return { id: env.id, seq };
       };
       const result = sendChain.then(run, run);
       sendChain = result.catch(() => {});
       return result;
+    },
+    draft(input) {
+      const env = build(input, "hook");
+      refuseHuman(env);
+      assertNoSecrets(env);
+      return { env, hash: writePending(home, roomId, env) };
     },
     async wait(timeoutSec, signal) {
       if (gone || unreadMessages().length > 0) return inbox();

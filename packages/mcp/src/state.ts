@@ -73,7 +73,7 @@ function ensureDir(dir: string): void {
   chmodSync(dir, 0o700);
 }
 
-function writeAtomic(path: string, data: string): void {
+export function writeAtomic(path: string, data: string): void {
   ensureDir(dirname(path));
   const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
   writeFileSync(tmp, data, { mode: 0o600 });
