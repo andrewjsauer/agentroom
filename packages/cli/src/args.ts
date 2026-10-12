@@ -3,8 +3,9 @@ import { parseArgs } from "node:util";
 export const USAGE = `Usage: agentroom <command> [options]
 
 Commands:
-  up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>]
+  up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>] [--ttl <n>h|<n>m]
       Create a room, print its share code, and register the MCP server.
+      --ttl sets the room's max age (default and ceiling 24h).
   join [code] [--agent ...] [--name <member>] [--relay <url>]
       Join a room with a share code (prompts for it when omitted on a terminal).
   status [--room <id>]
@@ -14,6 +15,8 @@ Commands:
       Replies to the most recently updated thread unless --thread or --new is given.
   approve <thread> [--room <id>]
       Approve a thread blocked by the chain limit (needs an interactive terminal).
+  down [--room <id>]
+      Close the room now (creator only). Run \`agentroom export\` first if you need a record.
   install claude [--room <id>]
       Register the room's MCP server with Claude Code (or write .mcp.json).
   mcp --room <id>
@@ -32,6 +35,7 @@ const OPTIONS = {
     name: { type: "string" },
     relay: { type: "string" },
     "max-chain": { type: "string" },
+    ttl: { type: "string" },
   },
   join: {
     agent: { type: "string" },
@@ -45,6 +49,7 @@ const OPTIONS = {
     room: { type: "string" },
   },
   approve: { room: { type: "string" } },
+  down: { room: { type: "string" } },
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
 } satisfies Record<string, StringFlags>;

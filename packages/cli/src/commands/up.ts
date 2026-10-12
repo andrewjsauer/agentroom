@@ -23,6 +23,31 @@ export function hoursUntil(ms: number): number {
   return Math.round((ms - Date.now()) / 3_600_000);
 }
 
+/** `--ttl <n>h|<n>m` as seconds, n a positive integer (KTD10). */
+export function parseTtl(flag: string): number {
+  const m = /^([1-9]\d*)([hm])$/.exec(flag);
+  if (!m) {
+    throw new CliError(
+      "--ttl must look like 2h or 30m (a positive whole number)",
+      2,
+    );
+  }
+  return Number(m[1]) * (m[2] === "h" ? 3600 : 60);
+}
+
+/** The expiry line: minutes when under 2 h; "without activity" only when the idle TTL applies. */
+function expiryLine(expiresAt: number, maxAge: boolean): string {
+  const ms = expiresAt - Date.now();
+  const left =
+    ms < 2 * 3_600_000
+      ? `${Math.max(0, Math.round(ms / 60_000))} min`
+      : `${hoursUntil(expiresAt)} h`;
+  const iso = new Date(expiresAt).toISOString();
+  return maxAge
+    ? `Expires in ${left} (${iso}).`
+    : `Expires after ${left} without activity (${iso}).`;
+}
+
 export async function up(
   values: Record<string, string | undefined>,
   ctx: CliContext,
@@ -38,6 +63,8 @@ export async function up(
     }
   }
 
+  const maxAgeSec = values.ttl === undefined ? undefined : parseTtl(values.ttl);
+
   const { code, secret } = generateShareCode();
   const { roomId, key } = deriveRoom(secret);
   const closeKeys = await generateCloseKeyPair();
@@ -48,7 +75,7 @@ export async function up(
       t: "hello",
       room: roomId,
       proto: 1,
-      create: { closeKey: closeKeys.publicKey, meta },
+      create: { closeKey: closeKeys.publicKey, maxAgeSec, meta },
     },
   });
   if (res.t === "error") {
@@ -78,7 +105,7 @@ export async function up(
       "They run:",
       `  agentroom join ${code}${relayFlag}`,
       `Room id: ${roomId}`,
-      `Expires after ${hoursUntil(res.expiresAt)} h without activity (${new Date(res.expiresAt).toISOString()}).`,
+      expiryLine(res.expiresAt, maxAgeSec !== undefined),
       "",
     ].join("\n"),
   );

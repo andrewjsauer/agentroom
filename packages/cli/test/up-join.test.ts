@@ -214,3 +214,30 @@ test("up --max-chain must be a positive integer", async () => {
   ).toBe(2);
   expect(events.filter((e) => e.event === "conn_open")).toHaveLength(0);
 });
+
+test("up --ttl sends maxAgeSec and prints the max-age deadline", async () => {
+  const h = home();
+  const two = makeCtx(h);
+  expect(await main(["up", "--relay", relay.url, "--ttl", "2h"], two.ctx)).toBe(
+    0,
+  );
+  const id2 = deriveRoom(parseShareCode(codeFrom(two.out()))).roomId;
+  expect(relay.snapshot(id2)?.maxAgeSec).toBe(7200);
+
+  const half = makeCtx(h);
+  expect(
+    await main(["up", "--relay", relay.url, "--ttl", "30m"], half.ctx),
+  ).toBe(0);
+  const id30 = deriveRoom(parseShareCode(codeFrom(half.out()))).roomId;
+  expect(relay.snapshot(id30)?.maxAgeSec).toBe(1800);
+  expect(half.out()).toMatch(/Expires in 30 min/);
+  expect(half.out()).not.toContain("0 h");
+  expect(half.out()).not.toContain("without activity");
+
+  for (const bad of ["0h", "5", "1d"]) {
+    const t = makeCtx(h);
+    expect(await main(["up", "--relay", relay.url, "--ttl", bad], t.ctx)).toBe(
+      2,
+    );
+  }
+});
