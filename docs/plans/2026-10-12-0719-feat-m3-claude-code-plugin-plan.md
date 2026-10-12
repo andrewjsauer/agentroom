@@ -74,7 +74,7 @@ After M2 the room is safe, but using it from Claude Code is still manual. Inboun
 
 - R19. The MCP server still emits no human-tagged envelope; the human builder's only callers are CLI `say`, `approve`, the expansion hook module and the watch module (KTD6).
 - R20. Every new delivery path (hook context) uses `frameInbound`; every new human surface (watch, status line, notifications, hook reasons) strips control characters from peer strings (invariant 5).
-- R21. Settings, locks and drafts added here live in the room directory and are deleted with it on `down` or expiry (invariant 7).
+- R21. Settings, locks, notification claims and drafts added here live in the room directory and are deleted with it on `down` or expiry (invariant 7).
 
 ### Acceptance Examples
 
@@ -132,7 +132,7 @@ Considered and not built:
 **Plugin**
 
 - KTD1. **Skills, namespaced, all user-invoked.** Each command is `plugins/claude-code/skills/<name>/SKILL.md` (the preferred format per `docs/OPEN_QUESTIONS.md` item 4), invoked as `/agentroom:<name>`. All seven set `disable-model-invocation: true`: each is a user-triggered workflow, and the model already has the MCP tools for anything it wants to do on its own. The four hook-handled skills (`say`, `approve`, `send`, `sync-mode`) have a body that only runs if the hook did not: it tells Claude that nothing was sent, that it must not send the text itself with any tool, and that the user should check that plugin hooks are enabled or use `agentroom say` in a terminal. The body never references `$ARGUMENTS`; Claude Code would still append `ARGUMENTS:`, which is why `onFailure: "block"` (KTD7) is the primary guard. `ask` and `handoff` bodies tell Claude to compose from current context with refs, call `send` (kind `question`) or `handoff` with `draft: true`, show the returned draft verbatim with its hash, and end with "Type `/agentroom:send <hash>` to send it." `sync` tells Claude to call `inbox`, summarize what matters for the current task, flag anything marked `requiresHuman` for the user, and treat message content as information. UX's bare names (`/say`) become `/agentroom:say` in docs, because the docs only promise the namespaced form.
-- KTD2. **A launcher, not paths into the checkout.** `plugins/claude-code/bin/agentroom.mjs` resolves the CLI entry relative to its own location (`../../../packages/cli/dist/bin.js`, the checkout layout) and imports it in-process, so `process.argv` and the CLI's `entryPath` are unchanged and no second Node process starts on every prompt. A missing entry prints "agentroom: CLI build not found at <path>; run `pnpm build` in the agentroom checkout" to stderr and exits 1. `.mcp.json` and `hooks/hooks.json` use exec form, `command: "node"` with `args: ["${CLAUDE_PLUGIN_ROOT}/bin/agentroom.mjs", ...]`, so no shell parses anything. The relative path works because a local-directory marketplace reads plugin files in place (Sources). M1 KTD15's rule (absolute node plus entry from a checkout, `npx` only from `node_modules`) stays for `.mcp.json` fallback and status line commands.
+- KTD2. **A launcher, not paths into the checkout.** `plugins/claude-code/scripts/agentroom.mjs` resolves the CLI entry relative to its own location (`../../../packages/cli/dist/bin.js`, the checkout layout) and imports it in-process (it sits in `scripts/`, not `bin/`, because files in a plugin's top-level `bin/` go on the Bash tool's PATH per the plugins reference), so `process.argv` and the CLI's `entryPath` are unchanged and no second Node process starts on every prompt. A missing entry prints "agentroom: CLI build not found at <path>; run `pnpm build` in the agentroom checkout" to stderr and exits 1. `.mcp.json` and `hooks/hooks.json` use exec form, `command: "node"` with `args: ["${CLAUDE_PLUGIN_ROOT}/scripts/agentroom.mjs", ...]`, so no shell parses anything. The relative path works because a local-directory marketplace reads plugin files in place (Sources). M1 KTD15's rule (absolute node plus entry from a checkout, `npx` only from `node_modules`) stays for `.mcp.json` fallback and status line commands.
 - KTD3. **Repo-root marketplace, one install command.** `.claude-plugin/marketplace.json` at the repo root names the marketplace `agentroom`, owner `agentroom`, with one entry `{ name: "agentroom", source: "./plugins/claude-code" }`. `install claude` with `claude` on PATH and a checkout entry path:
   1. `claude mcp remove --scope user agentroom` (ignore failure), so the M1 registration and the plugin server never both run against one queue.
   2. `claude plugin install agentroom --marketplace <repo root> --scope user`; the repo root is three directories above `dist/bin.js` and must contain `.claude-plugin/marketplace.json`.
@@ -151,7 +151,7 @@ Considered and not built:
   - send release: "Sent draft <hash> to room <id8> (thread <id8>) and approved the thread as <member> (human). Sent text: <first 200 characters of the body, stripped>", so the human sees what was actually released, read from disk.
   - sync-mode: "Delivery mode for room <id8>: <mode>." plus the live text from KTD11 when asked for `live`.
   - every failure: "Not sent: <cause>" (the scanner's KTD4 text from M2, the chain or thread error, "no current room", the run-`up` text on a gone room, a relay error code).
-- KTD8. **Command-name and argument parsing.** The hook accepts `command_name` equal to `say`, `approve`, `send` or `sync-mode`, with or without an `agentroom:` prefix, because the docs do not say which form arrives (Sources). The `hooks.json` matcher is `^(agentroom:)?(say|approve|send|sync-mode)$`; the subcommand re-checks the name exactly, so an unanchored or literal matcher reading cannot widen what is handled. `/say` arguments: an optional leading `--thread <id>` or `--new`, then the rest of `command_args` verbatim with outer whitespace trimmed, internal newlines kept. This differs from CLI `say`, which joins argv with spaces, because the hook receives the typed string itself. Empty text or both flags is a "Not sent: usage ..." reason.
+- KTD8. **Command-name and argument parsing.** The docs do not say whether a plugin skill's `command_name` arrives as `say` or `agentroom:say` (Sources), and a bare `approve` could be the user's own or a project's skill, which the user-scope hook must never hijack. The hook handles `command_name` `agentroom:<say|approve|send|sync-mode>`, or the bare name only when the hook input's `prompt`, leading whitespace trimmed, starts with `/agentroom:<name>`; every other case prints nothing and lets the command expand. The `hooks.json` matcher is `^(agentroom:)?(say|approve|send|sync-mode)$` so both forms reach the subcommand, which applies the rule above, so an unanchored or literal matcher reading cannot widen what is handled. `/say` arguments: an optional leading `--thread <id>` or `--new`, then the rest of `command_args` verbatim with outer whitespace trimmed, internal newlines kept. This differs from CLI `say`, which joins argv with spaces, because the hook receives the typed string itself. Empty text or both flags is a "Not sent: usage ..." reason.
 - KTD9. **`/approve` default.** With a thread id, the thread must exist (M2 KTD2 texts). With no argument, history is merged as M2 KTD20 does, `chainState` runs with the room's `maxAgentChain` from `welcome.meta`, and the most recently updated waiting thread is approved. With none waiting it refuses: "Not sent: no thread is waiting on a human; pass a thread id." Prefix ids are not added: ULID prefixes share their timestamp, so short prefixes collide in exactly the threads a user wants to tell apart.
 - KTD10. **Draft release verifies three things before posting.** `/send <hash>`:
   1. Reads `<room>/pending.json`; missing gives "Not sent: no draft is pending."
@@ -160,7 +160,7 @@ Considered and not built:
   Then it posts the envelope unchanged through the M2 seal-and-post helper (no chain check, M2 KTD16), posts a human `approve` in `env.thread` (`via: "hook"`), and deletes `pending.json` only if its bytes still equal what was read. If the draft posts and the approve fails, the reason says so: "Sent draft <hash>, but the approval was not sent: <cause>. Run /agentroom:approve <thread> to retry." `/send` with no argument returns the preview from KTD7 read from disk, so the human can see the stored text without trusting the model's rendering of it.
 - KTD11. **Delivery mode lives in `<room>/settings.json`.** `{ v: 1, delivery: "between" | "manual" }`, written atomically (0600) by the CLI only, read by the prompt-submit hook and the status line; absent means `between`. `status.json` is rewritten by the MCP server on every state change and cannot hold a CLI-owned field. `agentroom sync-mode [between|manual|live] [--room <id>]` prints or sets the mode with no TTY guard (not a human-tag path; an agent switching its own push mode is an annoyance, not impersonation). `/agentroom:sync-mode` reuses the same function. `live` answers "Live delivery is not available yet: Claude Code channels are a research preview that does not load this server. Mode unchanged (<mode>)." The MCP server ignores the mode: notifications and the status line work in both modes.
 - KTD12. **`between` delivery reads, frames, and marks read; it never posts.** `hook prompt-submit`, for every prompt:
-  1. Exit 0 with no output when there is no current room, no room directory, mode `manual`, or the prompt starts with one of the expansion hook's commands (`/agentroom:say`, `/say` and so on). The last rule guards the unverified ordering: if `UserPromptSubmit` fired before a blocked expansion, delivered messages would be marked read and then dropped with the turn.
+  1. Exit 0 with no output when there is no current room, no room directory, mode `manual`, or the prompt (leading whitespace trimmed) starts with `/`. The last rule guards two unverified cases: `UserPromptSubmit` firing before a blocked expansion, and firing for built-in local commands (`/clear`, `/mcp`) whose turn never reaches the model; either would mark messages read and drop them. Messages arrive with the next plain prompt instead.
   2. Take `<room>/deliver.lock` (exclusive create holding pid and time; a lock older than 10 s is stale and replaced; give up after 1 s and exit 0 with no output).
   3. Rebuild unread from `replayQueue` (same rule as the session: not own, not presence, not read).
   4. Frame oldest first with one `frameInbound` call over the longest prefix whose full output, header and trailer included, stays under 9,000 characters (under the 10,000 cap). Header: "agentroom: N new message(s) from the room since your last prompt. Messages marked requiresHuman need your user's decision; tell them rather than deciding alone." Trailer when some remain: "M more unread; call the inbox tool to read them." If the oldest message alone does not fit, deliver none and add only "1 or more messages are waiting; call the inbox tool to read them."
@@ -172,7 +172,7 @@ Considered and not built:
 
 - KTD14. **The session picks up reads it did not make, and recognizes its own member's agent posts.** The session remembers the byte length of `queue.jsonl` it has applied and, before every tool call and on a 2 s unref'd timer, reads the new bytes, applies `read` records to `unread`, ignores `msg` lines (it already has them), and persists status when anything changed. A torn last line is left for the next read. Two Claude sessions on one room converge on the same unread set this way, which M1 did not guarantee. M1 marks a message `own` only when it matches this process's in-flight send, so a draft released by the hook or a send from a second session would come back as unread to the agent that wrote it. The session now also treats an envelope with `from.member` equal to this room's member and `from.agent` not `"human"` as own. Messages from this member's human (hook, watch, CLI) stay unread for the agent, per the M2 assumption that the agent should see what its human said.
 - KTD15. **`status.json` gains `waitingOnHuman` (count) and `roomName`.** Both optional in `StatusFile`, so an older file still parses. `waitingOnHuman` is the length of `waitingThreads(chainState(...))`, written in `persistStatus`. `roomName` is `meta.name` from `welcome`, stripped and cut to 32 characters, when present.
-- KTD16. **Notifications in the session, OS commands chosen at runtime.** `packages/mcp/src/notify.ts` exports a notifier picked once: on macOS, `osascript` with `-e 'on run argv'`, `-e 'display notification (item 2 of argv) with title (item 1 of argv)'`, `-e 'end run'`, then title and text as separate arguments, so no peer text is ever inside AppleScript source; on Linux with `notify-send` on PATH, `notify-send --app-name=agentroom -- <title> <text>` with `&`, `<` and `>` escaped because notification servers may read the body as markup; otherwise a no-op. Spawned detached with `stdio: "ignore"`, no shell, errors ignored. `AGENTROOM_NOTIFY=off` selects the no-op (tests and conformance set it); `createRoomSession` accepts an injected notifier. `onMsg` notifies for a non-own, non-presence envelope from another member (`from.member` not this room's member, so the human's own `/say` never notifies them) that passes `isNeedsYou` and whose seq is above the head seq of the session's first `welcome`, so the `since=0` catch-up after a restart never fires a burst. Title "agentroom: <member> needs you" when `requiresHuman`, otherwise "agentroom: <kind> for you from <member>"; text is the body's first 80 characters with whitespace runs collapsed. Member and body go through `stripControl` first.
+- KTD16. **Notifications in the session, OS commands chosen at runtime.** `packages/mcp/src/notify.ts` exports a notifier picked once: on macOS, `osascript` with `-e 'on run argv'`, `-e 'display notification (item 2 of argv) with title (item 1 of argv)'`, `-e 'end run'`, then title and text as separate arguments, so no peer text is ever inside AppleScript source; on Linux with `notify-send` on PATH, `notify-send --app-name=agentroom -- <title> <text>` with `&`, `<` and `>` escaped because notification servers may read the body as markup; otherwise a no-op. Spawned detached with `stdio: "ignore"`, no shell, errors ignored. `AGENTROOM_NOTIFY=off` selects the no-op (tests and conformance set it); `createRoomSession` accepts an injected notifier. `onMsg` notifies for a non-own, non-presence envelope from another member (`from.member` not this room's member, so the human's own `/say` never notifies them) that passes `isNeedsYou` and whose seq is above the head seq of the session's first `welcome`, so the `since=0` catch-up after a restart never fires a burst. Before spawning, the session claims the notification by exclusively creating `<room>/notified/<env.id>`; only the process that creates it notifies, so several Claude Code sessions on one room raise one notification. The directory goes with the room dir. Title "agentroom: <member> needs you" when `requiresHuman`, otherwise "agentroom: <kind> for you from <member>"; text is the body's first 80 characters with whitespace runs collapsed. Member and body go through `stripControl` first.
 
 **Status line and install**
 
@@ -204,7 +204,7 @@ flowchart TB
     SL[statusLine command]
     MCPC[MCP client]
   end
-  L[plugins/claude-code/bin/agentroom.mjs launcher]
+  L[plugins/claude-code/scripts/agentroom.mjs launcher]
   subgraph CLI[agentroom CLI]
     HE[hook prompt-expansion]
     HS[hook prompt-submit]
@@ -322,7 +322,7 @@ These are agent bets made without a human to confirm them.
 plugins/claude-code/.claude-plugin/plugin.json                (new)
 plugins/claude-code/.mcp.json                                 (new)
 plugins/claude-code/hooks/hooks.json                          (new)
-plugins/claude-code/bin/agentroom.mjs                         (new)
+plugins/claude-code/scripts/agentroom.mjs                         (new)
 plugins/claude-code/skills/{sync,say,ask,handoff,send,approve,sync-mode}/SKILL.md (new)
 packages/mcp/src/{notify}.ts                                  (new)
 packages/mcp/src/{session,server,state,stdio,index}.ts        (modified)
@@ -342,7 +342,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 
 | Risk | Mitigation |
 |---|---|
-| `command_name` arrives in a form the matcher misses, so `/agentroom:say` expands and the model sees the text. | KTD8 matches both forms; the skill body tells Claude nothing was sent and not to send it; the human day of use checks it, and the implementer confirms against the real `claude` once if a session is available. |
+| `command_name` arrives in a form the matcher misses, so `/agentroom:say` expands and the model sees the text. | KTD8 matches both forms and checks the typed `prompt` for bare names; the skill body tells Claude nothing was sent and not to send it; the human day of use checks it, and the implementer confirms against the real `claude` once if a session is available. |
 | `UserPromptSubmit` fires before a blocked expansion and marks messages read that never reach the model. | KTD12 step 1 skips delivery for prompts that start with a hook-handled command. |
 | A hook-delivered batch is discarded because the hook timed out after marking read. | The hook does local file work only and marks read last; the lock wait is capped at 1 s. |
 | The hook and the MCP server both append to `queue.jsonl`. | One `O_APPEND` write per record on a local filesystem (KTD13); torn tails are already skipped by `replayQueue`. |
@@ -350,6 +350,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 | `node` is not on Claude Code's PATH (native installer without Node), so the launcher never starts. | The hook fails, `onFailure: "block"` blocks, and the skill body explains; README states the plugin needs Node 20.19+ on PATH. |
 | An agent runs `agentroom hook prompt-expansion` from its shell with forged stdin. | KTD6 refuses without `CLAUDE_PLUGIN_ROOT`; a deliberate agent can set it, which the threat model already accepts. |
 | The MCP server binds to `current` at startup while hooks and the status line re-read it, so after `up` or `join` in another terminal they act on a newer room than the agent's tools. | `up` and `join` tell Claude Code users to restart; the status line shows which room is current; a room-ownership lock is not built (Scope Boundaries). |
+| Every open Claude Code session holds a relay connection to the current room, and each hook post and watch pane adds one, against the relay's cap of 8 per room. | Hook posts fail with the `room_full` text and the user can close idle sessions; the cap is a relay option, and the day of use shows whether the default needs raising. |
 | `install claude` corrupts `~/.claude/settings.json`. | Invalid JSON aborts untouched; writes are atomic and keep every other key; tests use `CLAUDE_CONFIG_DIR` in a temp dir. |
 | A notification shows text a peer crafted to look like a system alert. | Title prefix "agentroom:" is fixed, text is stripped and cut to 80 characters, and peer text is passed as argv, never as script source. |
 
@@ -357,10 +358,10 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 
 - U3 adds `settings.json`, the delivery mode rule and the `sync-mode` command to ARCHITECTURE "Local state" and UX "CLI" and "Delivery modes" (manual controls push only).
 - U4 adds the external-read rule (KTD13, KTD14) and the `status.json` fields to ARCHITECTURE's local state contract.
-- U5 records the notifier choice and the `AGENTROOM_NOTIFY` switch in UX (watch and notifications) and README.
+- U5 records the notifier choice and the `AGENTROOM_NOTIFY` switch in UX (watch and notifications) and README, including that notification previews (sender and first 80 characters) stay in the OS notification history after `down` or expiry, which `AGENTROOM_NOTIFY=off` avoids.
 - U7 and U8 update UX "Why human messages go through a hook": namespaced command names, the always-block contract, the hook-origin guard, the `/send` preview and three checks, the `UserPromptSubmit` never-posts rule.
 - U10 updates UX "Status line" with the segment format and chaining details.
-- U11 updates UX "Claude Code plugin" install text and README install steps (`install claude`, `--plugin-dir`, `uninstall claude`, Node on PATH).
+- U11 updates UX "Claude Code plugin" install text and README install steps (`install claude`, `--plugin-dir`, `uninstall claude`, Node on PATH, and keeping one Claude Code session on the room or `manual` mode in the others until the project-binding question is decided).
 - U12 updates UX "`agentroom watch`": readline chosen, input commands.
 - U13 records the 2026-10-12 findings in `docs/OPEN_QUESTIONS.md` items 4, 6, 7 and a new notifier entry, and writes README Usage and Status for M3.
 
@@ -479,6 +480,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
   - A body with `\u001b[2K`, `\u0007` and 300 characters yields text with no control characters and at most 80 characters.
   - A live `requiresHuman` message from bob notifies once with the "needs you" title; a live `question` with `to` equal to this member notifies with the "for you" title; a message to another member, an own message and a presence do not notify.
   - A live `requiresHuman` message from this room's own member (its human or another session) does not notify.
+  - Two sessions on one room receive the same live `requiresHuman` message; the injected notifier is called once and `<room>/notified/<id>` exists.
   - On restart, messages replayed by the `since=0` catch-up (seq at or below the first welcome's head) do not notify.
 - **Verification:** mcp tests green and no test spawns a real notifier.
 
@@ -496,7 +498,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
   - Covers AE4. Two unread messages, one with a closing framing tag and a fake reminder in its body: output parses as JSON with `hookEventName: "UserPromptSubmit"`, `additionalContext` contains the header, exactly one random framing tag pair per message, the escaped body, and the reminder line; a second run prints nothing.
   - After delivery, `replayQueue` shows both ids read.
   - Covers AE5. Mode `manual`: no output, queue unchanged.
-  - Prompt `/agentroom:say hi` (and `/say hi`): no output, nothing marked read.
+  - Prompts `/agentroom:say hi`, `/agentroom:sync` and `/clear`: no output, nothing marked read.
   - No current room, or a missing room directory: no output, exit 0.
   - Thirty unread 1,000-character messages: `additionalContext` stays under 9,000 characters, delivered ids are a prefix in seq order, the trailer counts the rest, and only delivered ids are marked read.
   - A single 8,000-character body with 20 refs that does not fit: nothing delivered, the waiting line is present, nothing marked read.
@@ -520,7 +522,8 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 - **Patterns to follow:** M2 `say.ts`/`approve.ts` (thread choice, expiry cleanup), relay-backed CLI tests with `startRelay`.
 - **Test scenarios:**
   - Covers AE1. With a real local relay and a room where bob's agent posted one question, `command_name` `agentroom:say` and `command_args` `Sealed class.\nShip it` post an `answer` (decrypted from the relay) with `from.agent: "human"`, `via: "hook"`, `replyTo` the question, body byte-exact, and the output is exactly the KTD7 block object.
-  - The same with `command_name` `say` behaves identically.
+  - The same with `command_name` `say` and `prompt` `/agentroom:say ...` behaves identically.
+  - `command_name` `approve` with `prompt` `/approve` (the user's own skill): no output, exit 0, nothing posted.
   - `--new Can we drop iOS 15?` starts a thread whose id equals the envelope id, kind `question`.
   - `--thread <unknown> hi` blocks with "Not sent:" and the KTD2 text, nothing posted.
   - Empty text, and `--thread a --new x`, block with a usage reason.
@@ -563,7 +566,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 - **Goal:** A valid plugin and marketplace that load the checkout's CLI.
 - **Requirements:** R1, R2, R8, R9, R7 (hook wiring).
 - **Dependencies:** U2, U6, U7, U8.
-- **Files:** `plugins/claude-code/.claude-plugin/plugin.json`, `plugins/claude-code/.mcp.json`, `plugins/claude-code/hooks/hooks.json`, `plugins/claude-code/bin/agentroom.mjs`, `plugins/claude-code/skills/{sync,say,ask,handoff,send,approve,sync-mode}/SKILL.md`, `.claude-plugin/marketplace.json`, `packages/cli/test/plugin-files.test.ts`.
+- **Files:** `plugins/claude-code/.claude-plugin/plugin.json`, `plugins/claude-code/.mcp.json`, `plugins/claude-code/hooks/hooks.json`, `plugins/claude-code/scripts/agentroom.mjs`, `plugins/claude-code/skills/{sync,say,ask,handoff,send,approve,sync-mode}/SKILL.md`, `.claude-plugin/marketplace.json`, `packages/cli/test/plugin-files.test.ts`.
 - **Approach:**
   1. `plugin.json`: `name: "agentroom"`, `version: "0.0.0"`, description, `license: "Apache-2.0"`.
   2. `.mcp.json`: `mcpServers.agentroom` with exec-form `node` and the launcher plus `mcp` (KTD2, KTD4).
@@ -575,10 +578,10 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 - **Test scenarios:**
   - `plugin.json` parses and has `name` `agentroom`.
   - `hooks.json` has exactly the two events, exec form, the launcher path under `${CLAUDE_PLUGIN_ROOT}`, the KTD8 matcher, `onFailure: "block"` on the expansion hook and none on the submit hook.
-  - The matcher, compiled as a regex, matches `say`, `agentroom:say`, `sync-mode`, `agentroom:send` and does not match `essay`, `deploy` or `agentroom:sync`.
+  - The matcher, compiled as a regex, matches `say`, `agentroom:say`, `sync-mode`, `agentroom:send` and does not match `essay`, `deploy` or `agentroom:sync` (the subcommand's prompt check, tested in U7, decides bare names).
   - Every skill has frontmatter with `description` and `disable-model-invocation: true`; the four hook-handled skill bodies contain the "nothing was sent" sentence and no `$ARGUMENTS`; `ask` and `handoff` mention `draft: true` and `/agentroom:send`.
   - The marketplace entry's `source` is `./plugins/claude-code` with no `..`, and its `name` equals `plugin.json`'s.
-  - Spawning `node plugins/claude-code/bin/agentroom.mjs --version` after build prints the CLI version; with the entry path pointed at a missing file (temp copy of the launcher), it exits 1 with the build-not-found text.
+  - Spawning `node plugins/claude-code/scripts/agentroom.mjs --version` after build prints the CLI version; with the entry path pointed at a missing file (temp copy of the launcher), it exits 1 with the build-not-found text.
 - **Verification:** cli tests green; `claude plugin validate` output reported, or reported as skipped because `claude` is not on PATH.
 
 ### U10. `statusline` subcommand
@@ -652,7 +655,7 @@ README.md, docs/ARCHITECTURE.md, docs/UX.md, docs/OPEN_QUESTIONS.md (modified)
 - **Dependencies:** U1-U12.
 - **Files:** `tests/conformance/test/claude-plugin.test.ts`, `README.md`, `docs/ARCHITECTURE.md`, `docs/UX.md`, `docs/OPEN_QUESTIONS.md`.
 - **Approach:**
-  1. Local relay; `up` (alice) and `join` (bob) through the built CLI without `--agent claude`; MCP children for both through `node plugins/claude-code/bin/agentroom.mjs mcp`, with `AGENTROOM_NOTIFY=off`.
+  1. Local relay; `up` (alice) and `join` (bob) through the built CLI without `--agent claude`; MCP children for both through `node plugins/claude-code/scripts/agentroom.mjs mcp`, with `AGENTROOM_NOTIFY=off`.
   2. Hook runs spawn the launcher with fixture stdin, `CLAUDE_PLUGIN_ROOT` set to the plugin dir, and alice's `AGENTROOM_HOME`.
   3. Docs per the Documentation Plan; the OPEN_QUESTIONS entries carry the date and URLs from Sources.
 - **Test scenarios:**
@@ -706,7 +709,7 @@ M3 acceptance from `docs/PLAN.md`, mapped to proof:
 ## Deferred to Implementation
 
 - The exact message and exit code of a repeated `claude plugin install` for an already installed plugin (KTD3); confirm once against the real `claude` and record it in `docs/OPEN_QUESTIONS.md`.
-- Whether `command_name` arrives as `say` or `agentroom:say`; KTD8 handles both, and a real session during the human day of use confirms it.
+- Whether `command_name` arrives as `say` or `agentroom:say`; KTD8 handles both (bare only with a `/agentroom:` prompt), and a real session during the human day of use confirms it.
 - Helper names and the split of `hook/expansion.ts` versus `hook/release.ts` if one file reads better.
 
 ## Open Questions
@@ -714,4 +717,5 @@ M3 acceptance from `docs/PLAN.md`, mapped to proof:
 Deferred to humans; none block implementation.
 
 - Should `manual` mode also stop the agent from reading on its own (refuse `inbox` unless `/agentroom:sync` triggered it)? This plan reads `manual` as "no push" only.
+- Should a room be bound to the project directory it was opened from? The plugin and `current` are global, so with Claude Code sessions open in several projects, the first session to get a plain prompt receives the room's messages in `between` mode and marks them read for all. Recommended: `up` and `join` record their cwd in the room dir and `hook prompt-submit` delivers only when the hook's `cwd` is inside it. This plan does not build it because it makes a room belong to one project, which the docs do not say; until decided, README tells users to keep one Claude Code session on the room or use `manual` in the others.
 - Should the status line and notifications go quiet in `manual` mode? This plan keeps both, since they inform the human, not the agent.

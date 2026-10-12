@@ -84,7 +84,8 @@ test("the human builder is used only by say and approve", () => {
     const text = readFileSync(join(e.parentPath, e.name), "utf8");
     if (e.name !== "human.ts" && text.includes("humanFrom("))
       users.push(e.name);
-    if (e.name !== "human.ts" && /["'`]human["'`]/.test(text)) {
+    // Writing the tag: an `agent: "human"` property anywhere but the builder.
+    if (e.name !== "human.ts" && /agent:\s*["'`]human["'`]/.test(text)) {
       literals.push(e.name);
     }
   }
