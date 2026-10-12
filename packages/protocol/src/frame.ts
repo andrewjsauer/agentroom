@@ -31,11 +31,16 @@ function escapeContent(s: string): string {
   return s.replace(/<(?=\/?agentroom_message)/gi, "&lt;");
 }
 
+/** `repo/path[:lines][ @ commit]`, unescaped; display paths add their own neutralizing. */
+export function refText(ref: Ref): string {
+  let s = `${ref.repo}/${ref.path}`;
+  if (ref.lines !== undefined) s += `:${ref.lines}`;
+  if (ref.commit !== undefined) s += ` @ ${ref.commit}`;
+  return s;
+}
+
 function renderRef(ref: Ref): string {
-  let s = `${stripControl(ref.repo)}/${stripControl(ref.path)}`;
-  if (ref.lines !== undefined) s += `:${stripControl(ref.lines)}`;
-  if (ref.commit !== undefined) s += ` @ ${stripControl(ref.commit)}`;
-  return `refs: ${escapeContent(s)}`;
+  return `refs: ${escapeContent(stripControl(refText(ref)))}`;
 }
 
 /**

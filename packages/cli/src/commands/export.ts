@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentroomHome, replayQueue, roomDir } from "@agentroom/mcp";
-import type { Envelope } from "@agentroom/protocol";
+import { type Envelope, refText } from "@agentroom/protocol";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 import { requireHumanTerminal } from "../human.js";
 import { safeBody, safeLine } from "../safe-text.js";
@@ -31,13 +31,6 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-function renderRef(r: Envelope["refs"][number]): string {
-  let s = `${r.repo}/${r.path}`;
-  if (r.lines !== undefined) s += `:${r.lines}`;
-  if (r.commit !== undefined) s += ` @ ${r.commit}`;
-  return `refs: ${s}`;
-}
-
 /** Markdown where every peer string is neutralized: names and ids in code spans, bodies fenced (KTD23). */
 function render(
   roomId: string,
@@ -62,7 +55,13 @@ function render(
         "",
         `**seq ${seq}, ${new Date(env.ts).toISOString()}, ${who}${human}, ${env.kind}**`,
         "",
-        fenced(safeBody([env.body, ...env.refs.map(renderRef)].join("\n"))),
+        fenced(
+          safeBody(
+            [env.body, ...env.refs.map((r) => `refs: ${refText(r)}`)].join(
+              "\n",
+            ),
+          ),
+        ),
       );
     }
   }

@@ -1,4 +1,9 @@
-import { type Envelope, FRAME_REMINDER, Ref } from "@agentroom/protocol";
+import {
+  type Envelope,
+  FRAME_REMINDER,
+  Ref,
+  refText,
+} from "@agentroom/protocol";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { renderHandoff } from "./handoff.js";
@@ -98,10 +103,7 @@ function renderDraft(env: Envelope, hash: string): string {
   const lines = [
     `Draft ${hash} (not sent): ${env.kind} in thread ${env.thread}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
     env.body,
-    ...env.refs.map(
-      (r) =>
-        `refs: ${r.repo}/${r.path}${r.lines ? `:${r.lines}` : ""}${r.commit ? ` @ ${r.commit}` : ""}`,
-    ),
+    ...env.refs.map((r) => `refs: ${refText(r)}`),
     `Nothing was posted. Show this draft to your user; releasing it arrives with the Claude Code plugin's /send ${hash}.`,
   ];
   return lines.join("\n");
