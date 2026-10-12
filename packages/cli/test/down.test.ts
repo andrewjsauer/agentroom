@@ -88,6 +88,7 @@ test("creator down closes the room for members and removes local state", async (
   expect(existsSync(roomDir(home, roomId))).toBe(false);
   expect(readCurrent(home)).toBeUndefined();
   expect(relay.snapshot(roomId)).toBeUndefined();
+  expect(events).toContainEqual({ event: "closer_open", room: roomId });
   expect(t.out()).toContain("closed; local state removed");
 });
 
@@ -101,11 +102,14 @@ test("AE4 (non-creator): down from a joiner's home refuses and opens no connecti
       makeCtx(bobHome).ctx,
     ),
   ).toBe(0);
-  const opened = events.filter((e) => e.event === "conn_open").length;
+  const opens = () =>
+    events.filter((e) => e.event === "conn_open" || e.event === "closer_open")
+      .length;
+  const opened = opens();
   const t = makeCtx(bobHome);
   expect(await main(["down"], t.ctx)).toBe(1);
   expect(t.err()).toContain(CREATOR_ONLY_TEXT);
-  expect(events.filter((e) => e.event === "conn_open").length).toBe(opened);
+  expect(opens()).toBe(opened);
 });
 
 test("down when the relay forgot the room exits 0 and removes local state", async () => {
