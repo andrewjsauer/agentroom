@@ -28,7 +28,12 @@ export function setJsonEntry(
   entry: ServerEntry & { type?: "stdio" },
 ): string {
   const config = parse(text, file);
-  const servers = isObject(config.mcpServers) ? config.mcpServers : {};
+  if (config.mcpServers !== undefined && !isObject(config.mcpServers)) {
+    throw new CliError(
+      `${file} has an mcpServers value that is not an object; fix it, then rerun`,
+    );
+  }
+  const servers = config.mcpServers ?? {};
   servers.agentroom = entry;
   config.mcpServers = servers;
   return stringify(config);

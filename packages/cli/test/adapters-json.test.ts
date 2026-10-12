@@ -54,3 +54,7 @@ test("snippet: create, append, replace, idempotent, remove", () => {
   expect(removeBlock(BLOCK)).toBe("");
   expect(removeBlock(user)).toBe(user);
 });
+
+test("a non-object mcpServers is refused, not overwritten", () => {
+  expect(() => setJsonEntry(`{"mcpServers": ["keep"]}\n`, F, entry)).toThrow(F);
+});
