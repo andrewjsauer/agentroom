@@ -71,6 +71,23 @@ async function connect(): Promise<Client> {
 
 const create = { closeKey: "pk", meta: "META" };
 
+async function until(cond: () => boolean | Promise<boolean>) {
+  const end = Date.now() + 5000;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+/** Send a hello and return the first reply frame. */
+async function hello(extra: Record<string, unknown> = {}) {
+  const c = await connect();
+  c.send({ t: "hello", room: ROOM, proto: 1, ...extra });
+  const f = await c.next();
+  c.ws.close();
+  return f;
+}
+
 async function createRoom(room = ROOM, extra: Record<string, unknown> = {}) {
   const c = await connect();
   c.send({ t: "hello", room, proto: 1, create: { ...create, ...extra } });
@@ -254,10 +271,10 @@ describe("expiry", () => {
       expect(await c.next()).toMatchObject({ code: "room_expired" });
     }
     clock += 86_400_000;
-    await new Promise((r) => setTimeout(r, 30));
-    const c = await connect();
-    c.send({ t: "hello", room: ROOM, proto: 1 });
-    expect(await c.next()).toMatchObject({ code: "room_not_found" });
+    await until(async () => {
+      const f = await hello();
+      return f.t === "error" && f.code === "room_not_found";
+    });
   });
 });
 
@@ -285,7 +302,7 @@ async function closeOnly(room = ROOM) {
   c.send({ t: "hello", room, proto: 1, closeOnly: true });
   const welcome = await c.next();
   if (welcome.t !== "welcome") throw new Error(JSON.stringify(welcome));
-  return { c, nonce: welcome.nonce };
+  return { c, nonce: welcome.nonce, welcome };
 }
 
 describe("close", () => {
@@ -335,16 +352,33 @@ describe("close", () => {
   });
 
   test("close-only is admitted at the cap, is not counted, gets no msgs, and may only close", async () => {
-    await start({ maxMembers: 1 });
+    await start({ maxMembers: 2 });
     const { c: a } = await createRoom();
-    const { c } = await closeOnly();
+    const { c, welcome } = await closeOnly();
+    expect(welcome.members).toBe(1);
+    const { c: b, welcome: bw } = await joinRoom();
+    expect(bw).toMatchObject({ t: "welcome", members: 2 });
+    expect(await a.next()).toEqual({ t: "presence", members: 2 });
+    const { welcome: atCap } = await closeOnly();
+    expect(atCap.members).toBe(2);
     a.send({ t: "put", blob: "AAAA" });
-    await a.next();
-    expect(a.frames).toEqual([]);
+    a.send({ t: "put", blob: "BBBB" });
+    expect(await b.next()).toMatchObject({ t: "msg", seq: 1 });
+    expect(await b.next()).toMatchObject({ t: "msg", seq: 2 });
     expect(c.frames).toEqual([]);
     c.send({ t: "put", blob: "AAAA" });
     expect(await c.next()).toMatchObject({ code: "bad_proto" });
     await c.closed;
+  });
+
+  test("a third close-only connection evicts the oldest with room_full", async () => {
+    await start();
+    await createRoom();
+    const first = await closeOnly();
+    await closeOnly();
+    await closeOnly();
+    expect(await first.c.next()).toMatchObject({ code: "room_full" });
+    await first.c.closed;
   });
 
   test("an idle close-only connection is closed after the grace period", async () => {
@@ -440,14 +474,12 @@ describe("max age, rate limit, cap", () => {
     await c.closed;
     b.ws.close();
     await b.closed;
-    await new Promise((r) => setTimeout(r, 20));
-    const { welcome } = await joinRoom();
-    expect(welcome).toMatchObject({ t: "welcome" });
+    await until(async () => (await hello()).t === "welcome");
   });
 });
 
-test("invariant 1: stored state and logs hold no plaintext", async () => {
-  await start();
+test("invariant 1: stored state, errors and logs hold no plaintext, sig or blob", async () => {
+  await start({ maxMembers: 1, rateLimit: { burst: 1, perSec: 0.001 } });
   const secret = new Uint8Array(32).fill(9);
   const { roomId, key } = deriveRoom(secret);
   const marker = `MARKER-${ulid()}`;
@@ -464,28 +496,55 @@ test("invariant 1: stored state and logs hold no plaintext", async () => {
     key,
     roomId,
   );
+  const errors: RelayFrame[] = [];
   const { c: a } = await createRoom(roomId);
   a.send({ t: "put", blob });
-  await a.next();
+  expect(await a.next()).toMatchObject({ t: "msg", seq: 1 });
+  a.send({ t: "put", blob });
+  const limited = await a.next();
+  expect(limited).toMatchObject({ code: "rate_limited" });
+  errors.push(limited);
+  const full = await connect();
+  full.send({ t: "hello", room: roomId, proto: 1 });
+  const fullErr = await full.next();
+  expect(fullErr).toMatchObject({ code: "room_full" });
+  errors.push(fullErr);
   const snap = relay.snapshot(roomId);
+  expect(snap?.seq).toBe(1);
   expect(JSON.stringify(snap)).not.toContain(marker);
   for (const e of snap?.buffer ?? []) {
     expect(Buffer.from(e.blob, "base64").toString("latin1")).not.toContain(
       marker,
     );
   }
+
   const kp = await generateCloseKeyPair();
   const { roomId: r2 } = deriveRoom(new Uint8Array(32).fill(8));
   await createRoom(r2, { closeKey: kp.publicKey });
+  const bad = await closeOnly(r2);
+  const badSig = await signClose(
+    (await generateCloseKeyPair()).secretKey,
+    r2,
+    bad.nonce,
+  );
+  bad.c.send({ t: "close", sig: badSig });
+  const badErr = await bad.c.next();
+  expect(badErr).toMatchObject({ code: "bad_signature" });
+  errors.push(badErr);
   const { c, nonce } = await closeOnly(r2);
   const sig = await signClose(kp.secretKey, r2, nonce);
+  expect(JSON.stringify(relay.snapshot(r2))).not.toContain(sig);
   c.send({ t: "close", sig });
+  expect(await c.next()).toEqual({ t: "closed" });
   await c.closed;
-  const logged = JSON.stringify(events);
-  expect(logged).not.toContain(sig);
-  expect(logged).not.toContain(marker);
-  expect(logged).not.toContain(blob);
-  expect(logged).not.toContain("META");
+  expect(relay.snapshot(r2)).toBeUndefined();
+  expect(events).toContainEqual({ event: "room_closed", room: r2 });
+
+  for (const text of [JSON.stringify(events), JSON.stringify(errors)]) {
+    for (const secretText of [sig, badSig, marker, blob, "META"]) {
+      expect(text).not.toContain(secretText);
+    }
+  }
 });
 
 test("setAccepting, disconnectAll and inject", async () => {
