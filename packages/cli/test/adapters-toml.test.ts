@@ -85,3 +85,10 @@ test("headers followed by a comment are recognised", () => {
     `[mcp_servers.other] # mine\ncommand = "y"\n`,
   );
 });
+
+test("the comment above the next table survives removing ours", () => {
+  const text = `model = "o5"\n\n[mcp_servers.agentroom]\ncommand = "x"\n\n# my other server\n[mcp_servers.other]\ncommand = "y"\n`;
+  const without = `model = "o5"\n\n# my other server\n[mcp_servers.other]\ncommand = "y"\n`;
+  expect(removeAgentroomTable(text, F)).toBe(without);
+  expect(setAgentroomTable(text, F, entry)).toBe(`${without}\n${BLOCK}`);
+});
