@@ -104,7 +104,7 @@ function renderDraft(env: Envelope, hash: string): string {
     `Draft ${hash} (not sent): ${env.kind} in thread ${env.thread}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
     env.body,
     ...env.refs.map((r) => `refs: ${refText(r)}`),
-    `Nothing was posted. Show this draft to your user; releasing it arrives with the Claude Code plugin's /send ${hash}.`,
+    `Nothing was posted. Show this draft to your user verbatim; they release it by typing /agentroom:send ${hash} in Claude Code.`,
   ];
   return lines.join("\n");
 }

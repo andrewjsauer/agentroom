@@ -34,7 +34,7 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/PLAN.md` | Milestones with task checklists and acceptance criteria. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
-## Usage (Milestone 2)
+## Usage (Milestone 3)
 
 ```
 agentroom up [--agent claude|codex|gemini|cursor] [--name <member>] [--relay <url>] [--max-chain <n>] [--ttl <n>h|<n>m]
@@ -44,12 +44,23 @@ agentroom say [--thread <id> | --new] [--room <id>] "<text>"   # your own words,
 agentroom approve <thread> [--room <id>]                      # unblock a thread held by the chain limit
 agentroom export [--thread <id>] [--format md|gh-issue] [--room <id>]
 agentroom down [--room <id>]                                  # creator only: close the room now
-agentroom mcp --room <id>        # stdio MCP server; what the agent's MCP config runs
+agentroom watch [--room <id>]                                 # follow every thread and reply as yourself
+agentroom sync-mode [between|manual] [--room <id>]            # how messages reach Claude Code
+agentroom install claude | uninstall claude                   # Claude Code plugin and status line
+agentroom mcp [--room <id>]      # stdio MCP server; what the agent's MCP config runs
 ```
 
 `up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and print the stdio command to add to your agent's MCP config; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3).
 
-The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plus an `agentroom-rules` prompt with the etiquette. `send` and `handoff` accept `draft: true`, which saves the message for you to release instead of posting it (release arrives with the Claude Code plugin in Milestone 3).
+The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plus an `agentroom-rules` prompt with the etiquette. `send` and `handoff` accept `draft: true`, which saves the message for you to release with `/agentroom:send <hash>` in Claude Code instead of posting it.
+
+### Claude Code
+
+From a checkout (after `pnpm install && pnpm build`), run `agentroom up --agent claude` or `agentroom install claude`. With `claude` on PATH this installs the plugin in `plugins/claude-code/` from the repo-root marketplace (user scope) and sets your status line, chaining any status line you already had; restart Claude Code (or `/reload-plugins`) and type `/agentroom:sync`. Without `claude` on PATH, start Claude Code with `claude --plugin-dir <checkout>/plugins/claude-code`. `agentroom uninstall claude` removes the plugin and restores your previous status line. The plugin needs Node 20.19+ on Claude Code's PATH.
+
+In Claude Code: `/agentroom:say <text>` posts your own words (the model never sees them), `/agentroom:approve [thread]` unblocks a thread held by the chain limit, `/agentroom:ask <topic>` and `/agentroom:handoff` have Claude draft a message that you release with `/agentroom:send <hash>` (`/agentroom:send` alone shows the stored draft), `/agentroom:sync` summarizes new messages, and `/agentroom:sync-mode between|manual` picks whether new messages are added to your next prompt (`between`, the default) or wait until asked (`manual`). A room is bound to the directory where you ran `up` or `join`: only Claude Code sessions in that project get its messages at the next prompt. The plugin's MCP server serves the current room at startup, so restart Claude Code after `up` or `join`.
+
+Messages that need you raise a desktop notification (macOS `osascript`, Linux `notify-send`) with the sender and the first 80 characters, which stay in the OS notification history after the room closes; set `AGENTROOM_NOTIFY=off` to turn them off. Other agents' users can follow the room with `agentroom watch` in a terminal pane.
 
 `say` and `approve` are how you speak in the room yourself. They refuse to run unless both stdin and stdout are a terminal, and they refuse inside an agent's shell (when `CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI` or `CURSOR_AGENT` is set). Claude Code's IDE extensions set `CLAUDECODE` in integrated terminals, so run `say` from a standalone terminal. `say` replies in the most recently updated thread unless you pass `--thread` or `--new`.
 
@@ -96,4 +107,4 @@ Packages live under `packages/`: `protocol`, `relay-node`, `mcp`, and `cli` (pub
 
 ## Status
 
-Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
+Milestone 3 (Claude Code plugin and humans): the `plugins/claude-code` plugin with hook-based `/agentroom:say`, `approve` and draft release, `between` delivery at the next prompt, delivery modes, desktop notifications, a chained status line, and the `watch` pane. Milestone 2 (safe to use): chain limits, secret scanning, human-only `say`/`approve`, creator-only `down`, max-age expiry, relay rate limits and connection caps, `handoff`, drafts, the rules prompt, and `export`, on top of the Milestone 1 core loop (encrypted envelopes, in-memory relay, stdio MCP server, `up`/`join`/`status`/`mcp`). No relay is deployed yet. Design captured October 11, 2026.
