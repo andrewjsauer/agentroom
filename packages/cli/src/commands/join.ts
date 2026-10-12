@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import {
   agentroomHome,
@@ -87,6 +88,7 @@ export async function join(
     agent,
     createdByMe: existing?.createdByMe ?? false,
     closeSecretKey: existing?.closeSecretKey,
+    projectDir: resolve(ctx.cwd),
   });
   setCurrent(home, roomId);
 

@@ -33,6 +33,8 @@ export const RoomFile = z.object({
   agent: AgentName,
   createdByMe: z.boolean(),
   closeSecretKey: z.string().optional(),
+  /** Absolute cwd of `up`/`join`; `between` delivery only reaches sessions inside it. */
+  projectDir: z.string().optional(),
 });
 export type RoomFile = z.infer<typeof RoomFile>;
 
@@ -196,6 +198,40 @@ export function readStatus(
   } catch {
     return undefined;
   }
+}
+
+export const DeliveryMode = z.enum(["between", "manual"]);
+export type DeliveryMode = z.infer<typeof DeliveryMode>;
+
+/** `<room>/settings.json`, written only by the CLI (KTD11). */
+export const RoomSettings = z.object({
+  v: z.literal(1),
+  delivery: DeliveryMode,
+});
+export type RoomSettings = z.infer<typeof RoomSettings>;
+
+/** The room's settings; a missing or corrupt file reads as the default (`between`). */
+export function readRoomSettings(home: string, roomId: string): RoomSettings {
+  try {
+    return RoomSettings.parse(
+      JSON.parse(
+        readFileSync(join(roomDir(home, roomId), "settings.json"), "utf8"),
+      ),
+    );
+  } catch {
+    return { v: 1, delivery: "between" };
+  }
+}
+
+export function writeRoomSettings(
+  home: string,
+  roomId: string,
+  settings: RoomSettings,
+): void {
+  writeAtomic(
+    join(roomDir(home, roomId), "settings.json"),
+    `${JSON.stringify(RoomSettings.parse(settings))}\n`,
+  );
 }
 
 export function deleteRoomDir(home: string, roomId: string): void {

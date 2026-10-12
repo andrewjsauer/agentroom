@@ -8,6 +8,7 @@ import { join } from "./commands/join.js";
 import { mcp } from "./commands/mcp.js";
 import { say } from "./commands/say.js";
 import { status } from "./commands/status.js";
+import { syncMode } from "./commands/sync-mode.js";
 import { up } from "./commands/up.js";
 import { type CliContext, CliError } from "./context.js";
 
@@ -51,6 +52,8 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return install(parsed.positionals, parsed.values, ctx);
       case "mcp":
         return await mcp(parsed.values, ctx);
+      case "sync-mode":
+        return syncMode(parsed.positionals, parsed.values, ctx);
       case "hook":
         return await hook(parsed.positionals, ctx);
     }

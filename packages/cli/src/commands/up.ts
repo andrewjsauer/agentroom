@@ -1,4 +1,5 @@
 import { userInfo } from "node:os";
+import { resolve } from "node:path";
 import {
   agentroomHome,
   oneShot,
@@ -94,6 +95,7 @@ export async function up(
     agent,
     createdByMe: true,
     closeSecretKey: closeKeys.secretKey,
+    projectDir: resolve(ctx.cwd),
   });
   setCurrent(home, roomId);
 

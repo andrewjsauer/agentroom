@@ -57,6 +57,7 @@ test("up creates the room, writes room.json (0600) and current, and prints the c
     member: "alice",
     agent: "other",
     createdByMe: true,
+    projectDir: t.ctx.cwd,
   });
   expect(room.closeSecretKey).toBeDefined();
   expect(relay.snapshot(roomId)).toBeDefined();
