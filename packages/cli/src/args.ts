@@ -73,6 +73,7 @@ const OPTIONS = {
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
   hook: {},
+  watch: { room: { type: "string" } },
   uninstall: {},
   statusline: { chain: { type: "string" } },
   "sync-mode": { room: { type: "string" } },

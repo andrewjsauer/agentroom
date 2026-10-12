@@ -107,6 +107,7 @@ test("the human builder is used only by the human input paths", () => {
     "commands/say.ts",
     "hook/expansion.ts",
     "hook/release.ts",
+    "watch/tui.ts",
   ]);
   expect(literals).toEqual([]);
 });
