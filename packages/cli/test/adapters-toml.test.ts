@@ -92,3 +92,11 @@ test("the comment above the next table survives removing ours", () => {
   expect(removeAgentroomTable(text, F)).toBe(without);
   expect(setAgentroomTable(text, F, entry)).toBe(`${without}\n${BLOCK}`);
 });
+
+test("forms that do not define agentroom are not refused", () => {
+  const inline = `mcp_servers = { other = { command = "o" } }\n`;
+  expect(removeAgentroomTable(inline, F)).toBe(inline);
+  expect(() => setAgentroomTable(inline, F, entry)).toThrow(F);
+  const array = `[[mcp_servers.other]] # not agentroom\ncommand = "o"\n`;
+  expect(removeAgentroomTable(array, F)).toBe(array);
+});

@@ -59,10 +59,14 @@ function multilineState(
  * Remove `[mcp_servers.agentroom]` and its subtables (KTD5). Throws, naming `file`, when
  * `agentroom` is defined in a form this line-based writer does not rewrite.
  */
-export function removeAgentroomTable(text: string, file: string): string {
+export function removeAgentroomTable(
+  text: string,
+  file: string,
+  installing = false,
+): string {
   const refuse = (): never => {
     throw new CliError(
-      `${file} defines the agentroom MCP server in a form agentroom cannot rewrite safely (inline table, dotted key or array of tables); edit it by hand, then rerun`,
+      `${file} defines MCP servers in a form agentroom cannot rewrite safely (inline table, dotted key or array of tables); edit it by hand, then rerun`,
     );
   };
   const lines = text.split(/(?<=\n)/);
@@ -84,7 +88,7 @@ export function removeAgentroomTable(text: string, file: string): string {
       if (
         header[1] === "[[" &&
         table[0] === "mcp_servers" &&
-        line.includes("agentroom")
+        table[1] === "agentroom"
       ) {
         refuse();
       }
@@ -106,7 +110,11 @@ export function removeAgentroomTable(text: string, file: string): string {
       const atRoot =
         table.length === 0 && /^\s*["']?mcp_servers["']?\s*[.=]/.test(line);
       // An inline `mcp_servers = { ... }` cannot take an added [mcp_servers.agentroom] table.
-      if (table.length === 0 && /^\s*["']?mcp_servers["']?\s*=/.test(line)) {
+      if (
+        installing &&
+        table.length === 0 &&
+        /^\s*["']?mcp_servers["']?\s*=/.test(line)
+      ) {
         refuse();
       }
       const inServers =
@@ -134,7 +142,7 @@ export function setAgentroomTable(
   file: string,
   entry: ServerEntry,
 ): string {
-  const base = removeAgentroomTable(text, file).replace(/\n+$/, "");
+  const base = removeAgentroomTable(text, file, true).replace(/\n+$/, "");
   const block = `[mcp_servers.agentroom]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\n`;
   return base === "" ? block : `${base}\n\n${block}`;
 }
