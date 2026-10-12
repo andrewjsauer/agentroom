@@ -237,28 +237,36 @@ test("chain limit: bob's fourth agent message in a thread is refused until a hum
     replyTo: a.structured.id,
   });
   expect(q2.isError).toBe(false);
-  const blocked = await until(async () => {
-    const r = await call(bob, "send", {
-      kind: "answer",
-      body: marker("c4"),
-      thread,
-    });
-    return r.isError ? r : undefined;
-  }, "bob refused");
+  const waiting = (count: number) => async () => {
+    const r = await call(bob, "room_status");
+    const w = r.structured.waitingOnHuman as {
+      thread: string;
+      count: number;
+    }[];
+    const n = w.find((x) => x.thread === thread)?.count ?? 0;
+    return n === count ? r : undefined;
+  };
+  await until(waiting(3), "bob counts 3 agent messages");
+  const head = relay.snapshot(roomId)?.seq;
+  const blocked = await call(bob, "send", {
+    kind: "answer",
+    body: marker("c4"),
+    thread,
+  });
+  expect(blocked.isError).toBe(true);
   expect(blocked.text).toContain(
     "This thread needs a human. 3 agent messages in a row without a human reply.",
   );
-  const head = relay.snapshot(roomId)?.seq;
+  expect(relay.snapshot(roomId)?.seq).toBe(head);
   await humanApprove(thread);
-  const ok = await until(async () => {
-    const r = await call(bob, "send", {
-      kind: "answer",
-      body: marker("c5"),
-      thread,
-    });
-    return r.isError ? undefined : r;
-  }, "bob allowed after approve");
-  expect(ok.structured.seq).toBeGreaterThan(head as number);
+  await until(waiting(0), "bob sees the approval");
+  const ok = await call(bob, "send", {
+    kind: "answer",
+    body: marker("c5"),
+    thread,
+  });
+  expect(ok.isError).toBe(false);
+  expect(ok.structured.seq).toBe((head as number) + 2);
   await call(alice, "inbox");
   await call(bob, "inbox");
 }, 40_000);
