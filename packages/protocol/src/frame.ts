@@ -70,6 +70,7 @@ export function frameInbound(
       ];
       if (env.to !== undefined) attrs.push(["to", env.to]);
       attrs.push(["id", env.id]);
+      if (env.requiresHuman) attrs.push(["requiresHuman", "true"]);
       const open = `<${tag}${attrs.map(([k, v]) => ` ${k}="${escapeAttr(v)}"`).join("")} untrusted="true">`;
       const lines = [open, escapeContent(env.body), ...env.refs.map(renderRef)];
       lines.push(`</${tag}>`);

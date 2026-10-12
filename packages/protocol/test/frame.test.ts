@@ -179,3 +179,25 @@ test("stripControl removes controls, separators and bidi overrides and isolates"
     "caf\u00e9 \u200d \u2065 \u206a",
   );
 });
+
+test("a requiresHuman message is marked in its open tag", () => {
+  const out = frameInbound(
+    [
+      {
+        v: 1,
+        id: "i",
+        ts: 0,
+        from: { member: "bob", agent: "codex", via: "mcp" },
+        kind: "decision",
+        thread: "t",
+        body: "ship?",
+        refs: [],
+        requiresHuman: true,
+      },
+    ],
+    { randomHex: () => "abc" },
+  );
+  expect(out.split("\n")[0]).toBe(
+    '<agentroom_message_abc from="bob/codex" kind="decision" thread="t" id="i" requiresHuman="true" untrusted="true">',
+  );
+});
