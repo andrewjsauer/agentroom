@@ -21,7 +21,7 @@ prompt="$(cat scripts/orchestrator-prompt.md)"
 resume_args=()
 if [[ -n "${RESUME:-}" ]]; then
   resume_args=(--resume "$RESUME")
-  prompt="Continue the build from where you stopped. Re-read docs/PLAN.md, docs/LOG.md, git log, and scripts/orchestrator-prompt.md (updated: targets now run through M3 and the agent-doable parts of M4; every Agent call passes model: \"opus\"). The M2 build subagent was killed mid-run by a headless timeout (now fixed); check git log for what landed and relaunch M2 for the remaining units."
+  prompt="${RESUME_PROMPT:-Continue the build from where you stopped. Re-read docs/PLAN.md, docs/LOG.md, git log, and scripts/orchestrator-prompt.md.}"
 fi
 
 echo "Logging to $log"
