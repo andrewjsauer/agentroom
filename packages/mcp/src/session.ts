@@ -54,6 +54,8 @@ const MAX_NAME_CHARS = 64;
 const DEFAULT_MAX_AGENT_CHAIN = 3;
 const EXTERNAL_READ_MS = 2_000;
 const ROOM_NAME_CHARS = 32;
+const RECENT_THREADS = 10;
+const PREVIEW_CHARS = 80;
 
 /** Non-terminal relay errors fail the oldest in-flight send with these texts (KTD13). */
 const RELAY_ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -82,6 +84,21 @@ export interface MemberSeen {
   lastSeen: number;
 }
 
+/** A thread from the local queue; root sender and preview are peer-supplied and untrusted. */
+export interface ThreadSummary {
+  thread: string;
+  rootKind: string;
+  rootMember: string;
+  rootAgent: string;
+  /** First characters of the root body, control characters stripped. */
+  preview: string;
+  messages: number;
+  lastActivity: number;
+  /** Consecutive agent messages since the last human message in this thread. */
+  agentRun: number;
+  waitingOnHuman: boolean;
+}
+
 export interface RoomStatus {
   roomId: string;
   member: string;
@@ -99,6 +116,8 @@ export interface RoomStatus {
   waitingOnHuman: { thread: string; count: number }[];
   /** Consecutive agent messages across threads, against the room-wide limit (2N). */
   roomAgentRun: { count: number; limit: number };
+  /** Up to 10 threads, most recently active first, so a fresh session can find thread ids. */
+  recentThreads: ThreadSummary[];
 }
 
 /**
@@ -222,6 +241,47 @@ export function createRoomSession(opts: {
     };
   };
 
+  /** The most recently active threads in the local queue, newest first. */
+  const recentThreads = (threads: Map<string, number>): ThreadSummary[] => {
+    const byThread = new Map<
+      string,
+      { root: Envelope; messages: number; lastSeq: number; lastTs: number }
+    >();
+    for (const { seq, env } of [...history].sort((a, b) => a.seq - b.seq)) {
+      if (env.kind === "presence") continue;
+      const t = byThread.get(env.thread);
+      if (t) {
+        t.messages++;
+        t.lastSeq = seq;
+        t.lastTs = env.ts;
+      } else {
+        byThread.set(env.thread, {
+          root: env,
+          messages: 1,
+          lastSeq: seq,
+          lastTs: env.ts,
+        });
+      }
+    }
+    return [...byThread]
+      .sort(([, a], [, b]) => b.lastSeq - a.lastSeq)
+      .slice(0, RECENT_THREADS)
+      .map(([thread, t]) => {
+        const agentRun = threads.get(thread) ?? 0;
+        return {
+          thread: sanitizeName(thread),
+          rootKind: t.root.kind,
+          rootMember: sanitizeName(t.root.from.member),
+          rootAgent: sanitizeName(t.root.from.agent),
+          preview: stripControl(t.root.body).slice(0, PREVIEW_CHARS),
+          messages: t.messages,
+          lastActivity: t.lastTs,
+          agentRun,
+          waitingOnHuman: agentRun >= maxAgentChain,
+        };
+      });
+  };
+
   /** Full status for `room_status`; the only caller that pays for the chain scan. */
   const status = (): RoomStatus => {
     const chain = chainState(ordered(), maxAgentChain);
@@ -239,6 +299,7 @@ export function createRoomSession(opts: {
         count: w.count,
       })),
       roomAgentRun: { count: chain.room, limit: 2 * maxAgentChain },
+      recentThreads: recentThreads(chain.threads),
     };
   };
 

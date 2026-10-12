@@ -69,7 +69,13 @@ function expectStatusFramed(text: string): void {
   const close = text.indexOf("</agentroom_members>");
   expect(open).toBeGreaterThan(-1);
   expect(close).toBeGreaterThan(open);
-  expect(text.indexOf(FRAME_REMINDER)).toBeGreaterThan(close);
+  const recentOpen = text.indexOf(
+    '<agentroom_recent_threads untrusted="true">',
+  );
+  const recentClose = text.indexOf("</agentroom_recent_threads>");
+  expect(recentOpen).toBeGreaterThan(close);
+  expect(recentClose).toBeGreaterThan(recentOpen);
+  expect(text.indexOf(FRAME_REMINDER)).toBeGreaterThan(recentClose);
 }
 
 beforeAll(async () => {
@@ -156,6 +162,19 @@ test("question and answer travel framed with the right from, kind and thread", a
   expect(inbox.text).toContain(`from="${BOB}/codex"`);
   expect(inbox.text).toContain('kind="answer"');
   expect(inbox.text).toContain(`thread="${qid}"`);
+
+  // Once read, the thread id is still discoverable through room_status.
+  const status = await call(alice, "room_status");
+  expectStatusFramed(status.text);
+  const line = status.text.indexOf(`- ${qid}: question from ${ALICE}/codex`);
+  expect(line).toBeGreaterThan(
+    status.text.indexOf('<agentroom_recent_threads untrusted="true">'),
+  );
+  expect(line).toBeLessThan(status.text.indexOf("</agentroom_recent_threads>"));
+  expect(status.structured.recentThreads).toContainEqual(
+    expect.objectContaining({ thread: qid, rootKind: "question", messages: 2 }),
+  );
+  expect(JSON.stringify(status.structured)).not.toContain(q);
 }, 30_000);
 
 test("both sides resume after a forced disconnect and receive an injected message once", async () => {
