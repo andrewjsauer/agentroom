@@ -20,10 +20,22 @@ Commands:
       plus the gh command to run (needs an interactive terminal).
   down [--room <id>]
       Close the room now (creator only). Run \`agentroom export\` first if you need a record.
+  sync-mode [between|manual|live] [--room <id>]
+      Show or set how messages reach Claude Code: at your next prompt (between) or only on request (manual).
+  watch [--room <id>]
+      Follow every thread in this terminal and reply as yourself (needs an interactive terminal).
   install claude [--room <id>]
-      Register the room's MCP server with Claude Code (or write .mcp.json).
-  mcp --room <id>
-      Serve the room over stdio for an agent (used by the MCP config).
+      Install the Claude Code plugin and status line (or register the MCP server / write .mcp.json).
+  uninstall claude
+      Remove the Claude Code plugin and restore your previous status line.
+
+Used by the Claude Code plugin:
+  mcp [--room <id>]
+      Serve the room (default: the current room) over stdio for an agent.
+  hook prompt-expansion|prompt-submit
+      Handle a Claude Code hook event read from stdin.
+  statusline [--chain <command>]
+      Print the status line segment, after the output of an existing status line command.
 
 Options:
   --help       Show this help.
@@ -60,6 +72,7 @@ const OPTIONS = {
   },
   install: { room: { type: "string" } },
   mcp: { room: { type: "string" } },
+  hook: {},
 } satisfies Record<string, FlagSpec>;
 
 export type CommandName = keyof typeof OPTIONS;

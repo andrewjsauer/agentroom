@@ -42,11 +42,16 @@ export function requireHumanTerminal(
 export const HUMAN_MESSAGE_REASON =
   "Human messages must come from your own terminal.";
 
-/** The only human-tagged `from` outside tests (KTD21); used by `say` and `approve` alone. */
-export function humanFrom(room: RoomFile): {
-  member: string;
-  agent: "human";
-  via: "cli";
-} {
-  return { member: room.member, agent: "human", via: "cli" };
+/** Which human input path stamped the message. */
+export type HumanVia = "cli" | "hook" | "watch";
+
+/**
+ * The only human-tagged `from` outside tests (KTD21, M3 KTD6). Callers: `say`, `approve`,
+ * the expansion hook and the watch pane; a source-scan test keeps it that way.
+ */
+export function humanFrom(
+  room: RoomFile,
+  via: HumanVia,
+): { member: string; agent: "human"; via: HumanVia } {
+  return { member: room.member, agent: "human", via };
 }

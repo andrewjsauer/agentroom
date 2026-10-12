@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { type Envelope, FRAME_REMINDER, frameInbound } from "../src/index.js";
+import {
+  type Envelope,
+  FRAME_REMINDER,
+  frameInbound,
+  stripControl,
+} from "../src/index.js";
 
 function env(patch: Partial<Envelope> = {}): Envelope {
   return {
@@ -165,4 +170,12 @@ describe("frameInbound", () => {
     });
     expect(out).toContain("\nList<String> and a < b\n");
   });
+});
+
+test("stripControl removes controls, separators and bidi overrides and isolates", () => {
+  const bidi = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
+  expect(stripControl(`a\u0000\n\u007f\u0085\u2028\u2029${bidi}b`)).toBe("ab");
+  expect(stripControl("caf\u00e9 \u200d \u2065 \u206a")).toBe(
+    "caf\u00e9 \u200d \u2065 \u206a",
+  );
 });

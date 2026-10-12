@@ -2,6 +2,7 @@ import { parseCli, USAGE } from "./args.js";
 import { approve } from "./commands/approve.js";
 import { down } from "./commands/down.js";
 import { exportRoom } from "./commands/export.js";
+import { hook } from "./commands/hook.js";
 import { install } from "./commands/install.js";
 import { join } from "./commands/join.js";
 import { mcp } from "./commands/mcp.js";
@@ -50,6 +51,8 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return install(parsed.positionals, parsed.values, ctx);
       case "mcp":
         return await mcp(parsed.values, ctx);
+      case "hook":
+        return await hook(parsed.positionals, ctx);
     }
   } catch (err) {
     if (err instanceof CliError) {

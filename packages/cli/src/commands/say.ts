@@ -57,7 +57,7 @@ export async function say(
       v: 1,
       id,
       ts: Date.now(),
-      from: humanFrom(s.room),
+      from: humanFrom(s.room, "cli"),
       kind: replyTo === undefined ? "question" : "answer",
       thread,
       replyTo,

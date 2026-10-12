@@ -32,6 +32,9 @@ importers:
       '@agentroom/protocol':
         specifier: workspace:*
         version: link:../protocol
+      zod:
+        specifier: ^4.6.6
+        version: 4.6.6
     devDependencies:
       '@agentroom/relay-node':
         specifier: workspace:*

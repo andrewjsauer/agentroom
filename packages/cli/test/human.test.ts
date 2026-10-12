@@ -1,9 +1,11 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import {
   AGENT_MARKERS,
   HUMAN_MESSAGE_REASON,
+  humanFrom,
   requireHumanTerminal,
 } from "../src/human.js";
 import { CliError } from "../src/index.js";
@@ -75,20 +77,31 @@ test("safeLine and safeBody remove escape sequences and controls", () => {
   expect(safeBody(`a\n\tb${osc}\u0000c\u001b[31m`)).toBe("a\n\tbc");
 });
 
-test("the human builder is used only by say and approve", () => {
+test("humanFrom stamps the requested input path", () => {
+  const room = { member: "alice" } as Parameters<typeof humanFrom>[0];
+  for (const via of ["cli", "hook", "watch"] as const) {
+    expect(humanFrom(room, via)).toEqual({
+      member: "alice",
+      agent: "human",
+      via,
+    });
+  }
+});
+
+test("the human builder is used only by the human input paths", () => {
   const dir = new URL("../src/", import.meta.url);
   const users: string[] = [];
   const literals: string[] = [];
   for (const e of readdirSync(dir, { recursive: true, withFileTypes: true })) {
     if (!e.isFile()) continue;
     const text = readFileSync(join(e.parentPath, e.name), "utf8");
-    if (e.name !== "human.ts" && text.includes("humanFrom("))
-      users.push(e.name);
+    const rel = relative(fileURLToPath(dir), join(e.parentPath, e.name));
+    if (e.name !== "human.ts" && text.includes("humanFrom(")) users.push(rel);
     // Writing the tag: an `agent: "human"` property anywhere but the builder.
     if (e.name !== "human.ts" && /agent:\s*["'`]human["'`]/.test(text)) {
       literals.push(e.name);
     }
   }
-  expect(users.sort()).toEqual(["approve.ts", "say.ts"]);
+  expect(users.sort()).toEqual(["commands/approve.ts", "commands/say.ts"]);
   expect(literals).toEqual([]);
 });

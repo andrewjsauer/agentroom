@@ -25,7 +25,8 @@
   },
   "dependencies": {
     "@agentroom/mcp": "workspace:*",
-    "@agentroom/protocol": "workspace:*"
+    "@agentroom/protocol": "workspace:*",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@agentroom/relay-node": "workspace:*"

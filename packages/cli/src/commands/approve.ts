@@ -27,7 +27,7 @@ export async function approve(
       v: 1,
       id,
       ts: Date.now(),
-      from: humanFrom(s.room),
+      from: humanFrom(s.room, "cli"),
       kind: "approve",
       thread,
       body: "",
