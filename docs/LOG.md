@@ -118,3 +118,31 @@ Decisions and open items:
 - Rooms created before M3 have no `projectDir` and get no `between` delivery.
 
 Next: M4 agent-doable parts (adapters, relay-cf, README).
+
+## 2026-10-12: M4 agent-doable parts, review, and first E2E with real agents
+
+Completed (commits `6fd9ba2`..`7a6ea52`):
+- Codex, Gemini CLI and Cursor adapters (`install`/`uninstall`, user or `--project` scope, AGENTS.md/GEMINI.md note); room rules sent as MCP instructions; own posts tracked by envelope id.
+- `relay-cf`: Durable Object relay on the shared `relay-core`, passing the same wire conformance suite as relay-node (run locally on workerd).
+- README: "Try it now (from source)" path (local relay, separate `AGENTROOM_HOME` per side, two-machine relay options), npx quickstart labeled as post-publish, threat model and status refreshed.
+- M4 code review: 12 fixes (TOML/JSON config editing that could drop or duplicate a user's server tables, symlinked and 0600 config files, marker pairing, a relay-cf closer and alarm race, an `ENOTEMPTY` race in `down`, `readQueueTail` reading the whole queue per message).
+- E2E finding fixed: `room_status` now lists the 10 most recent threads, so an agent can reply in a thread after `inbox` marked it read.
+
+Test status (after `7a6ea52`): protocol 138, relay-node 30, mcp 91, cli 164, conformance 42, all passed; typecheck clean; biome "Checked 147 files. No fixes applied."
+
+E2E with two real headless Claude Code agents (Sonnet), local relay-node, separate `AGENTROOM_HOME` and project dir per side, MCP via `--mcp-config` (no plugin install):
+- Question from A, answer from B in the same thread, answer received by A and treated as information: pass.
+- Fresh A session found the thread via `room_status` and replied in it: pass (after `7a6ea52`).
+- Chain limit: fourth consecutive agent message refused with the "needs a human" error naming `say`/`approve`: pass.
+- Secret scanner blocks a well-formed AWS key id (`AKIA` + 16 base32 chars): pass. A malformed id containing `9` is not matched, which is correct for real AWS ids.
+- `agentroom say` with `CLAUDECODE=1` refuses (exit 1): pass.
+- Relay log holds room ids and counts only; no plaintext: pass.
+
+Follow-ups:
+- The E2E agent said `room_status` showed no preview text, though previews are in the framed text block. Check whether Claude Code shows `structuredContent` instead of the text content; if so, the text block (and its previews) is invisible to Claude Code.
+- Not yet exercised with real agents: the Claude Code plugin path (`install claude`, hooks, `/agentroom:*`), Codex, Gemini CLI, Cursor, and relay-cf deployed on Cloudflare.
+
+Waiting on Andrew:
+- Deploy a relay (relay-cf via `wrangler deploy`, or relay-node behind TLS) and set the default relay URL.
+- Real two-person test with the coworker (M1 and M3 acceptance) and the manual pre-release checklist with Codex and Gemini (`docs/RELEASE_CHECKLIST.md`).
+- Create the GitHub repo (fill in the README clone URL), record the demo GIF, publish `agentroom` to npm, tag v0.1.0.

@@ -65,11 +65,11 @@ Status 2026-10-12: agent-checkable parts done (plugin validates with `claude plu
 
 ## Milestone 4: Agnostic (week 4)
 
-- [ ] Adapters: `install codex`, `install gemini`, `install cursor` (MCP config plus `AGENTS.md` / `GEMINI.md` snippet).
+- [x] Adapters: `install codex`, `install gemini`, `install cursor` (MCP config plus `AGENTS.md` / `GEMINI.md` snippet).
 - [ ] Confirm each agent calls `inbox` and `wait` when instructed; document actual behavior honestly in README.
-- [ ] `relay-cf`: Cloudflare Worker plus Durable Object with hibernation and alarms; buffer, seq, close key and meta in Durable Object storage, `deleteAll()` on expiry and close; passes the shared relay conformance suite.
+- [x] `relay-cf`: Cloudflare Worker plus Durable Object with hibernation and alarms; buffer, seq, close key and meta in Durable Object storage, `deleteAll()` on expiry and close; passes the shared relay conformance suite.
 - [ ] Manual pre-release checklist covering Claude Code, Codex, and Gemini against the same room.
-- [ ] README: quickstart, demo GIF, threat model, self-hosting guide.
+- [ ] README: quickstart, demo GIF, threat model, self-hosting guide. (Done except the demo GIF.)
 - [ ] Publish to npm; tag v0.1.0.
 
 **Accept:** a Claude Code user and a Codex user complete a question-answer-decision thread through the public relay.
