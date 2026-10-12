@@ -18,7 +18,7 @@ interface InstallState {
 }
 
 /** `<CLAUDE_CONFIG_DIR or $HOME/.claude>/settings.json`; undefined when neither is set. */
-export function claudeSettingsPath(env: NodeJS.ProcessEnv): string | undefined {
+function claudeSettingsPath(env: NodeJS.ProcessEnv): string | undefined {
   if (env.CLAUDE_CONFIG_DIR)
     return join(env.CLAUDE_CONFIG_DIR, "settings.json");
   if (env.HOME) return join(env.HOME, ".claude", "settings.json");
@@ -28,7 +28,7 @@ export function claudeSettingsPath(env: NodeJS.ProcessEnv): string | undefined {
 const statePath = (ctx: CliContext) =>
   join(agentroomHome(ctx.env), "claude-install.json");
 
-const isObject = (v: unknown): v is Json =>
+export const isObject = (v: unknown): v is Json =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Read settings.json; missing is `{}`, anything but a JSON object aborts naming the file. */

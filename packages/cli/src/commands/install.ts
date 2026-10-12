@@ -7,7 +7,7 @@ import {
   findOnPath,
   roomExists,
 } from "@agentroom/mcp";
-import { installStatusLine } from "../claude-settings.js";
+import { installStatusLine, isObject } from "../claude-settings.js";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
@@ -24,10 +24,6 @@ export function mcpServerCommand(
     return { command: "npx", args: ["-y", "agentroom", ...tail] };
   }
   return { command: execPath, args: [entryPath, ...tail] };
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Remove the M1 user-scope registration; a missing entry makes this fail, which is fine. */

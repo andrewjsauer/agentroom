@@ -26,8 +26,7 @@ const ExpansionInput = z.looseObject({
 const COMMANDS = ["say", "approve", "send", "sync-mode"] as const;
 type Command = (typeof COMMANDS)[number];
 
-export const GUARD_TEXT =
-  "agentroom hook: not running as a Claude Code plugin hook";
+const GUARD_TEXT = "agentroom hook: not running as a Claude Code plugin hook";
 
 /**
  * Which human-only command this is, if any (KTD8). `agentroom:<name>` always; a bare name only
@@ -51,7 +50,7 @@ export function recognize(
 class Usage extends Error {}
 
 /** `[--thread <id> | --new] <text>`; the text keeps its internal newlines (KTD8). */
-export function parseSayArgs(args: string): {
+function parseSayArgs(args: string): {
   thread?: string;
   isNew: boolean;
   body: string;

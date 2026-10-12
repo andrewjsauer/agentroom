@@ -22,7 +22,7 @@ const SubmitInput = z.looseObject({
 });
 
 /** Stay under Claude Code's 10,000-character additionalContext cap (KTD12). */
-export const CONTEXT_BUDGET = 9_000;
+const CONTEXT_BUDGET = 9_000;
 const LOCK_STALE_MS = 10_000;
 const LOCK_WAIT_MS = 1_000;
 
@@ -74,10 +74,10 @@ export const WAITING_TEXT =
  * The longest oldest-first prefix whose framed context, header and trailer included, fits the
  * budget, and the context text. One `frameInbound` call frames the whole prefix (invariant 5).
  */
-export function frameForPrompt(
-  unread: Envelope[],
-  budget = CONTEXT_BUDGET,
-): { delivered: Envelope[]; context: string } {
+function frameForPrompt(unread: Envelope[]): {
+  delivered: Envelope[];
+  context: string;
+} {
   const hex = randomBytes(6).toString("hex");
   const randomHex = () => hex;
   // frameInbound joins per-message blocks with "\n", so prefix lengths add up exactly.
@@ -89,7 +89,7 @@ export function frameForPrompt(
     const rest = unread.length - k;
     const total =
       header(k).length + 1 + next + (rest > 0 ? 1 + trailer(rest).length : 0);
-    if (total >= budget) break;
+    if (total >= CONTEXT_BUDGET) break;
     framed = next;
     count = k;
   }
