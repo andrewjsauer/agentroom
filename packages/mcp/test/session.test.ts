@@ -87,10 +87,17 @@ test("invariant 2 guard: a forced human agent makes send throw before anything r
 test("invariant 2 source guard: only the seal-path comparison mentions the human tag", () => {
   const dir = new URL("../src/", import.meta.url);
   let hits = 0;
-  for (const name of readdirSync(dir)) {
-    const text = readFileSync(new URL(name, dir), "utf8");
-    hits += text.split('"human"').length - 1;
+  let files = 0;
+  for (const entry of readdirSync(dir, {
+    recursive: true,
+    withFileTypes: true,
+  })) {
+    if (!entry.isFile()) continue;
+    files++;
+    const text = readFileSync(join(entry.parentPath, entry.name), "utf8");
+    hits += text.match(/["'`]human["'`]/g)?.length ?? 0;
   }
+  expect(files).toBeGreaterThan(5);
   expect(hits).toBe(1);
 });
 
