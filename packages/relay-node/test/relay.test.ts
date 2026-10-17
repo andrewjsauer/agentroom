@@ -371,14 +371,18 @@ describe("close", () => {
     await c.closed;
   });
 
-  test("a third close-only connection evicts the oldest with room_full", async () => {
-    await start();
+  test("close-only connections never evict each other; the per-address cap refuses more", async () => {
+    await start({ maxRoomConnsPerIp: 4 });
     await createRoom();
     const first = await closeOnly();
     await closeOnly();
     await closeOnly();
-    expect(await first.c.next()).toMatchObject({ code: "room_full" });
-    await first.c.closed;
+    const c = await connect();
+    c.send({ t: "hello", room: ROOM, proto: 1, closeOnly: true });
+    expect(await c.next()).toMatchObject({ code: "room_full" });
+    await c.closed;
+    expect(first.c.frames).toEqual([]);
+    expect(first.c.ws.readyState).toBe(WebSocket.OPEN);
   });
 
   test("an idle close-only connection is closed after the grace period", async () => {

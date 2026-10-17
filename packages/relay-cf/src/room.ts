@@ -20,11 +20,13 @@ import type { Env } from "./index.js";
 /** Per-connection state; kept in the socket attachment so it survives hibernation. */
 interface Attachment {
   room: string;
-  role: "pending" | "member" | "closer";
+  /** CF-Connecting-IP; also the socket's hibernation tag, so sockets are counted per address. */
+  ip: string;
+  /** `done`: closed by either side, kept until the runtime drops the socket. */
+  role: "pending" | "member" | "closer" | "done";
   nonce?: string;
   tokens: number;
   refilledAt: number;
-  joinedAt: number;
   closeBy?: number;
 }
 
@@ -44,7 +46,7 @@ function limitsFrom(env: Env): RelayLimits {
     bufferSize: n(env.BUFFER_SIZE, d.bufferSize),
     maxEnvelopeBytes: d.maxEnvelopeBytes,
     maxMembers: n(env.MAX_MEMBERS, d.maxMembers),
-    maxClosers: n(env.MAX_CLOSERS, d.maxClosers),
+    maxRoomConnsPerIp: n(env.MAX_ROOM_CONNS_PER_IP, d.maxRoomConnsPerIp),
     rateBurst: n(env.RATE_BURST, d.rateBurst),
     ratePerSec: n(env.RATE_PER_SEC, d.ratePerSec),
     closeGraceMs: n(env.CLOSE_GRACE_MS, d.closeGraceMs),
@@ -75,18 +77,23 @@ export class Room extends DurableObject<Env> {
     if (this.env.TEST_INSPECT === "1" && url.pathname === "/__inspect") {
       return Response.json(Object.fromEntries(await this.ctx.storage.list()));
     }
+    const ip = req.headers.get("CF-Connecting-IP") || "unknown";
+    if (this.open(ip).length >= this.limits.maxRoomConnsPerIp) {
+      return new Response("too many connections from your address\n", {
+        status: 429,
+      });
+    }
     const [client, server] = Object.values(new WebSocketPair()) as [
       WebSocket,
       WebSocket,
     ];
-    this.ctx.acceptWebSocket(server);
-    const now = Date.now();
+    this.ctx.acceptWebSocket(server, [ip]);
     server.serializeAttachment({
       room,
+      ip,
       role: "pending",
       tokens: this.limits.rateBurst,
-      refilledAt: now,
-      joinedAt: now,
+      refilledAt: Date.now(),
     } satisfies Attachment);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -102,7 +109,24 @@ export class Room extends DurableObject<Env> {
   private fail(ws: WebSocket, code: ErrorCode, message: string, end = true) {
     log({ event: "error", code });
     this.send(ws, { t: "error", code, message });
-    if (end) ws.close(1000);
+    if (end) this.drop(ws, 1000);
+  }
+
+  /** Close a socket and mark it done, so no count, broadcast or alarm considers it again. */
+  private drop(ws: WebSocket, code: number, reason?: string): void {
+    ws.serializeAttachment({ ...att(ws), role: "done" });
+    try {
+      ws.close(code, reason);
+    } catch {
+      // Already closed.
+    }
+  }
+
+  /** This address's sockets that are not done, optionally excluding one. */
+  private open(ip: string, except?: WebSocket): WebSocket[] {
+    return this.ctx
+      .getWebSockets(ip)
+      .filter((w) => w !== except && att(w).role !== "done");
   }
 
   private sockets(role: Attachment["role"], except?: WebSocket): WebSocket[] {
@@ -132,9 +156,10 @@ export class Room extends DurableObject<Env> {
         ? { t: "closed" }
         : { t: "error", code: "room_expired", message: "room expired" };
     for (const w of this.ctx.getWebSockets()) {
-      if (att(w).role === "pending") continue;
-      this.send(w, frame);
-      w.close(1000);
+      const role = att(w).role;
+      if (role === "done") continue;
+      if (role !== "pending") this.send(w, frame);
+      this.drop(w, 1000);
     }
     const until = tombstoneUntil(state);
     this.state = undefined;
@@ -174,9 +199,8 @@ export class Room extends DurableObject<Env> {
     }
     for (const w of this.sockets("closer")) {
       if ((att(w).closeBy ?? 0) > now) continue;
-      // Drop the role first: a peer that never answers the close must not keep rescheduling the alarm.
-      w.serializeAttachment({ ...att(w), role: "pending" });
-      w.close(1000);
+      // `done` first: a peer that never answers the close must not keep rescheduling the alarm.
+      this.drop(w, 1000);
     }
     await this.schedule();
   }
@@ -253,7 +277,8 @@ export class Room extends DurableObject<Env> {
       room: state0,
       tombstoned: this.tomb !== undefined && now < this.tomb,
       members: this.sockets("member").length,
-      closers: this.sockets("closer").length,
+      ipConns: this.open(a.ip, ws).filter((w) => att(w).role !== "pending")
+        .length,
       now,
       limits: this.limits,
     });
@@ -269,22 +294,7 @@ export class Room extends DurableObject<Env> {
     }
     const state = this.state;
     if (!state) return;
-    if (d.evictCloser) {
-      const [oldest] = this.sockets("closer").sort(
-        (x, y) => att(x).joinedAt - att(y).joinedAt,
-      );
-      if (oldest) {
-        // Evict rather than refuse: a leaked share code must not be able to block close.
-        oldest.serializeAttachment({ ...att(oldest), role: "pending" });
-        this.fail(
-          oldest,
-          "room_full",
-          "replaced by a newer close-only connection",
-        );
-      }
-    }
     a.nonce = newNonce();
-    a.joinedAt = now;
     if (d.closeOnly) {
       a.role = "closer";
       a.closeBy = now + this.limits.closeGraceMs;
@@ -342,7 +352,7 @@ export class Room extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket): Promise<void> {
     const a = att(ws);
-    ws.serializeAttachment({ ...a, role: "pending" });
+    ws.serializeAttachment({ ...a, role: "done" });
     if (a.role !== "member" || !this.state) return;
     const members = this.sockets("member", ws).length;
     this.broadcast({ t: "presence", members }, ws);

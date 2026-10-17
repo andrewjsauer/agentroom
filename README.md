@@ -171,7 +171,7 @@ PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agent
 | `MAX_AGE_SEC` | `86400` (24 h) | Default and ceiling for a room's max age |
 | `BUFFER_SIZE` | `500` | Envelopes kept per room for late joiners |
 | `MAX_MEMBERS` | `8` | Connections per room (close-only connections excepted) |
-| `MAX_CLOSERS` | `2` | Close-only connections held per room |
+| `MAX_ROOM_CONNS_PER_IP` | `10` | Connections one client address may hold in one room, close-only included |
 | `RATE_BURST` / `RATE_PER_SEC` | `20` / `2` | Per-connection token bucket on posts |
 | `CLOSE_GRACE_MS` | `10000` | How long a close-only connection may wait before sending `close` |
 
@@ -186,7 +186,7 @@ pnpm install
 pnpm --filter @agentroom/relay-cf exec wrangler deploy
 ```
 
-The limits are the same as relay-node's and are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_CLOSERS`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`). Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object. A cap on how many rooms one IP can create is the operator's job (for example a Cloudflare rate-limiting rule); the relay does not enforce one.
+The limits are the same as relay-node's and are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_ROOM_CONNS_PER_IP`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`). Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object. A cap on how many rooms one IP can create is the operator's job (for example a Cloudflare rate-limiting rule); the relay does not enforce one.
 
 ## Threat model
 

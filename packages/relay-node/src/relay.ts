@@ -33,8 +33,8 @@ export interface RelayOptions {
   maxAgeSec?: number;
   /** Connections per room, close-only connections excepted (default 8). */
   maxMembers?: number;
-  /** Close-only connections held per room; a new one evicts the oldest (default 2). */
-  maxClosers?: number;
+  /** Connections one address may hold in one room, close-only included (default 10). */
+  maxRoomConnsPerIp?: number;
   /** Token bucket on `put`, per connection (default burst 20, refill 2/s). */
   rateLimit?: { burst: number; perSec: number };
   /** How long a close-only connection may wait before sending `close` (default 10 s). */
@@ -72,6 +72,8 @@ interface Room {
 }
 
 interface Conn {
+  /** The TCP peer address; behind a reverse proxy, the proxy's. */
+  ip: string;
   room?: Room;
   nonce?: string;
   closeOnly: boolean;
@@ -93,7 +95,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     bufferSize: opts.bufferSize ?? d.bufferSize,
     maxEnvelopeBytes: opts.maxEnvelopeBytes ?? d.maxEnvelopeBytes,
     maxMembers: opts.maxMembers ?? d.maxMembers,
-    maxClosers: opts.maxClosers ?? d.maxClosers,
+    maxRoomConnsPerIp: opts.maxRoomConnsPerIp ?? d.maxRoomConnsPerIp,
     rateBurst: opts.rateLimit?.burst ?? d.rateBurst,
     ratePerSec: opts.rateLimit?.perSec ?? d.ratePerSec,
     closeGraceMs: opts.closeGraceMs ?? d.closeGraceMs,
@@ -104,6 +106,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const rooms = new Map<string, Room>();
   /** Closed or expired room ids, remembered until createdAt + maxAge (KTD7). */
   const tombstones = new Map<string, number>();
+  const conns = new Map<WebSocket, Conn>();
   let accepting = true;
 
   const wss = new WebSocketServer({
@@ -177,11 +180,16 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
 
   const join = (ws: WebSocket, conn: Conn, hello: HelloFrame): void => {
     let room = liveRoom(hello.room);
+    const ipConns = room
+      ? [...room.conns, ...room.closers].filter(
+          (w) => conns.get(w)?.ip === conn.ip,
+        ).length
+      : 0;
     const decision = decideHello(hello, {
       room: room?.state,
       tombstoned: tombstones.has(hello.room),
       members: room?.conns.size ?? 0,
-      closers: room?.closers.size ?? 0,
+      ipConns,
       now: now(),
       limits,
     });
@@ -199,14 +207,6 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       log({ event: "room_created", room: hello.room });
     }
     if (!room) return;
-    if (decision.evictCloser) {
-      // Evict the oldest closer rather than refuse: a leaked share code must not be able to block close.
-      const [oldest] = room.closers;
-      if (oldest) {
-        room.closers.delete(oldest);
-        fail(oldest, "room_full", "replaced by a newer close-only connection");
-      }
-    }
     const nonce = newNonce();
     conn.room = room;
     conn.nonce = nonce;
@@ -258,12 +258,14 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     log({ event: "room_closed", room: room.state.roomId });
   };
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     const conn: Conn = {
+      ip: req.socket.remoteAddress ?? "",
       closeOnly: false,
       tokens: limits.rateBurst,
       refilledAt: now(),
     };
+    conns.set(ws, conn);
     let greeted = false;
     ws.on("error", () => {});
     ws.on("message", (data, isBinary) => {
@@ -303,6 +305,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       put(room, frame.blob);
     });
     ws.on("close", () => {
+      conns.delete(ws);
       clearTimeout(conn.graceTimer);
       const room = conn.room;
       room?.closers.delete(ws);

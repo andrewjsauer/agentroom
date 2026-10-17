@@ -8,7 +8,7 @@ export interface Env {
   MAX_AGE_SEC?: string;
   BUFFER_SIZE?: string;
   MAX_MEMBERS?: string;
-  MAX_CLOSERS?: string;
+  MAX_ROOM_CONNS_PER_IP?: string;
   RATE_BURST?: string;
   RATE_PER_SEC?: string;
   CLOSE_GRACE_MS?: string;

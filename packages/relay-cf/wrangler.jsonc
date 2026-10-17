@@ -12,7 +12,7 @@
     "MAX_AGE_SEC": "86400",
     "BUFFER_SIZE": "500",
     "MAX_MEMBERS": "8",
-    "MAX_CLOSERS": "2",
+    "MAX_ROOM_CONNS_PER_IP": "10",
     "RATE_BURST": "20",
     "RATE_PER_SEC": "2",
     "CLOSE_GRACE_MS": "10000"

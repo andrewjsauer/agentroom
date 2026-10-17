@@ -24,7 +24,7 @@ const relay = await startRelay({
   maxAgeSec: num("MAX_AGE_SEC"),
   bufferSize: num("BUFFER_SIZE"),
   maxMembers: num("MAX_MEMBERS"),
-  maxClosers: num("MAX_CLOSERS"),
+  maxRoomConnsPerIp: num("MAX_ROOM_CONNS_PER_IP"),
   rateLimit:
     burst !== undefined || perSec !== undefined
       ? { burst: burst ?? 20, perSec: perSec ?? 2 }

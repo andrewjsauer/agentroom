@@ -28,7 +28,7 @@ const ctx = (c: Partial<Parameters<typeof decideHello>[1]> = {}) => ({
   room: undefined,
   tombstoned: false,
   members: 0,
-  closers: 0,
+  ipConns: 0,
   now: 1000,
   limits: L,
   ...c,
@@ -57,16 +57,18 @@ describe("decideHello", () => {
       },
     );
   });
-  test("closers are admitted at the member cap and evict at the closer cap", () => {
+  test("closers are admitted at the member cap; only the per-address cap bounds them", () => {
     expect(
       decideHello(
         hello({ closeOnly: true }),
-        ctx({ room: live, members: 8, closers: 1 }),
+        ctx({ room: live, members: 8, ipConns: 9 }),
       ),
-    ).toMatchObject({ ok: true, closeOnly: true, evictCloser: false });
-    expect(
-      decideHello(hello({ closeOnly: true }), ctx({ room: live, closers: 2 })),
-    ).toMatchObject({ ok: true, evictCloser: true });
+    ).toEqual({ ok: true, created: undefined, closeOnly: true });
+    for (const h of [hello({ closeOnly: true }), hello()]) {
+      expect(
+        decideHello(h, ctx({ room: live, ipConns: L.maxRoomConnsPerIp })),
+      ).toMatchObject({ code: "room_full" });
+    }
   });
   test("closeOnly with create or since is bad_proto", () => {
     expect(

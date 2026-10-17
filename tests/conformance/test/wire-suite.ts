@@ -56,6 +56,20 @@ export function defineWireSuite(
       return { c, welcome: await c.take("welcome") };
     };
     const blob = (n: number) => Buffer.alloc(n, 7).toString("base64");
+    /** A connection over a cap: refused at the upgrade (HTTP 429) or with `room_full` after hello. */
+    const expectRefused = async (
+      room: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const c = await Conn.open(relay.url, room).catch((e: Error) => e);
+      if (c instanceof Error) {
+        expect(c.message).toBe("HTTP 429");
+        return;
+      }
+      conns.push(c);
+      c.send({ t: "hello", room, proto: 1, ...extra });
+      expect((await c.take("error")).code).toBe("room_full");
+    };
 
     test("create, join, presence, sender echo, and since replay", async () => {
       const { room, c: a, welcome } = await create();
@@ -142,16 +156,50 @@ export function defineWireSuite(
       expect(c.closed).toBe(false);
     });
 
-    test("room cap: the ninth connection is room_full; closers are admitted and the oldest evicted", async () => {
+    test("room cap: the ninth member is room_full; closers are admitted until the per-address cap", async () => {
       const { room } = await create();
       for (let i = 0; i < 7; i++) await join(room);
       const ninth = await hello(room);
       expect((await ninth.take("error")).code).toBe("room_full");
+      await ninth.waitClosed();
       const c1 = await join(room, { closeOnly: true });
       await join(room, { closeOnly: true });
       expect(c1.welcome.nonce).toBeTypeOf("string");
-      await join(room, { closeOnly: true });
-      expect((await c1.c.take("error")).code).toBe("room_full");
+      // The eleventh socket from one address: relay-cf refuses the upgrade, relay-node the hello.
+      await expectRefused(room, { closeOnly: true });
+      expect(c1.c.frames).toEqual([]);
+      expect(c1.c.closed).toBe(false);
+    });
+
+    test("a room-id holder looping close-only hellos cannot stop the creator's close", async () => {
+      const { room, keys, c: creator } = await create();
+      let stop = false;
+      const attack = (async () => {
+        const held: Conn[] = [];
+        while (!stop) {
+          const c = await Conn.open(relay.url, room).catch(() => undefined);
+          if (!c) continue;
+          held.push(c);
+          c.send({ t: "hello", room, proto: 1, closeOnly: true });
+          await c.take("welcome", () => true, 2000).catch(() => {});
+          if (held.length > 3) held.shift()?.close();
+        }
+        for (const c of held) c.close();
+      })();
+      try {
+        await new Promise((r) => setTimeout(r, 300));
+        const { c, welcome } = await join(room, { closeOnly: true });
+        await new Promise((r) => setTimeout(r, 300));
+        c.send({
+          t: "close",
+          sig: await signClose(keys.secretKey, room, welcome.nonce),
+        });
+        await c.take("closed");
+        await creator.take("closed");
+      } finally {
+        stop = true;
+        await attack;
+      }
     });
 
     test("a closer that never sends close is dropped after the grace period", async () => {

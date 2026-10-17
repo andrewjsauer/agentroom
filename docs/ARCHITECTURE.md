@@ -69,7 +69,7 @@ Creating and joining are distinct. Only `up` sends `hello` with `create`; the re
 
 `close` is accepted only when `sig` verifies under the pinned `closeKey` over `room_id || nonce`, where `nonce` is issued per connection in `welcome`, so a captured `close` cannot be replayed. The relay sends `closed` to every connection, closes them, deletes the room, and tombstones the id until `createdAt + maxAge`; any `hello` for a tombstoned id, with or without `create`, gets `room_expired` ("room was closed or expired"), so `room_not_found` keeps meaning "never existed or the relay restarted". A wrong key, replayed nonce or malformed signature gets `bad_signature` and the room survives.
 
-A `hello` may carry `closeOnly: true` (not combined with `create` or `since`). Such a connection skips the connection cap, gets a `welcome` with a nonce, is not counted or broadcast to, and may send only `close`; any other frame gets `bad_proto`, and the relay closes it after 10 s without a `close`. A room holds at most two close-only connections; a third evicts the oldest with `room_full`, so holders of the room ID cannot pile up sockets and timers, and cannot lock the creator out either. This lets a creator close a room whose cap is full.
+A `hello` may carry `closeOnly: true` (not combined with `create` or `since`). Such a connection skips the connection cap, gets a `welcome` with a nonce, is not counted or broadcast to, and may send only `close`; any other frame gets `bad_proto`, and the relay closes it after 10 s without a `close`. Close-only connections never evict or block each other; the only bound on them is the per-address cap (10 connections of any kind per client address per room, see Abuse limits), so a room-id holder can pile up at most that many from one address, each dropped after 10 s, and cannot crowd out a creator connecting from another address. (Until 2026-10-17 a room held two close-only connections and a new one evicted the oldest, which let anyone with the room id evict the creator's `down` between `welcome` and `close` by looping close-only hellos.) This lets a creator close a room whose member cap is full.
 
 Wire behavior fixed in milestone 1 (both relays must match it):
 
@@ -85,6 +85,14 @@ Two implementations share the same protocol and a shared conformance test suite:
 - Room rules (frame parsing, create and join decisions, caps, rate limit, envelope size, expiry deadline, tombstone time, nonce, close-signature check) live once in `packages/protocol/src/relay-core.ts`, exported as `@agentroom/protocol/relay-core`. It uses only `zod` and Web platform globals (no Node APIs, `Buffer` or libsodium; a test guards this), so both relays import it.
 - `relay-node`: a ~300-line server for self-hosting and local dev, on the shared core. It verifies `close` with protocol's libsodium `verifyClose`.
 - `relay-cf`: one Durable Object per room (`idFromName(room_id)`), WebSocket hibernation so idle rooms cost nothing, alarms for expiry. Hibernation evicts in-memory state, so per-connection role, nonce, rate-limit tokens and closer deadline live in the socket attachment, and room state lives in Durable Object storage under three kinds of key: `room` (seq, meta, close key, TTLs, createdAt, lastActivity), `b:<seq, zero-padded to 10>` (one ciphertext blob each, the last 500 kept) and `tomb` (only the time until which the id is refused). One alarm runs at the earliest of the room's expiry, a closer's grace deadline and the tombstone time, and re-reads storage when it fires. Close and expiry send the frames, close the sockets, call `storage.deleteAll()` and `deleteAlarm()`, then write only `tomb`; the tombstone alarm deletes everything again. Limits come from wrangler `vars` with relay-node's defaults. It verifies `close` with Web Crypto Ed25519 (see Crypto). Public hosted default.
+
+### Abuse limits
+
+The public relay-cf instance is the CLI default and its owner pays for its usage, so both relays bound what one client address can cost. "Address" is `CF-Connecting-IP` on relay-cf and the TCP peer address on relay-node (behind a reverse proxy that is the proxy's, so raise the per-address caps there).
+
+| Limit | Default | Scope | Enforced by | On breach |
+|---|---|---|---|---|
+| `MAX_ROOM_CONNS_PER_IP` | 10 | connections of any kind, per address per room | both (relay-cf also at upgrade) | relay-cf HTTP 429 at upgrade; `room_full` on `hello` |
 
 ## Crypto
 
