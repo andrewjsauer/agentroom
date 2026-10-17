@@ -1,5 +1,5 @@
 /** Placeholder default; no relay is deployed there yet (plan KTD14). Override with --relay or AGENTROOM_RELAY. */
-export const DEFAULT_RELAY = "wss://relay.agentroom.dev";
+export const DEFAULT_RELAY = "wss://agentroom-relay.sauerapple.workers.dev";
 
 /** `--relay` flag, then `AGENTROOM_RELAY`, then the default constant. */
 export function resolveRelay(

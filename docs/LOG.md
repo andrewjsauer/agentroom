@@ -143,6 +143,6 @@ Follow-ups:
 - Not yet exercised with real agents: the Claude Code plugin path (`install claude`, hooks, `/agentroom:*`), Codex, Gemini CLI, Cursor, and relay-cf deployed on Cloudflare.
 
 Waiting on Andrew:
-- Deploy a relay (relay-cf via `wrangler deploy`, or relay-node behind TLS) and set the default relay URL.
+- ~~Deploy a relay and set the default relay URL.~~ Done 2026-10-17: relay-cf deployed to `wss://agentroom-relay.sauerapple.workers.dev` (smoke-tested with `up`/`join`/`status`/`down`) and set as the CLI default.
 - Real two-person test with the coworker (M1 and M3 acceptance) and the manual pre-release checklist with Codex and Gemini (`docs/RELEASE_CHECKLIST.md`).
 - Create the GitHub repo (fill in the README clone URL), record the demo GIF, publish `agentroom` to npm, tag v0.1.0.
