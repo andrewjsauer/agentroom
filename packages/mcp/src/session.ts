@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import {
   assertNoSecrets,
+  type ChainRefusal,
   type ChainState,
   chainRefusalText,
   chainState,
@@ -35,12 +36,19 @@ import {
   type AgentName,
   appendQueue,
   clearCurrentIf,
+  compactQueue,
   deleteRoomDir,
+  HISTORY_MAX,
+  isHuman,
+  QUEUE_COMPACT_BYTES,
+  QUEUE_COMPACT_RECORDS,
   type QueueRecord,
   type RoomFile,
   readQueueTail,
   readRoomFile,
   replayQueue,
+  type StoredMessage,
+  trimHistory,
   writeStatus,
 } from "./state.js";
 
@@ -152,8 +160,6 @@ function buildFrom(
   return { member: room.member, agent: room.agent, via };
 }
 
-const isHuman = (env: Envelope) => (env.from.agent as string) === "human";
-
 /** Invariant 2 runtime guard, applied to every post and draft. */
 function refuseHuman(env: Envelope): void {
   if (isHuman(env)) {
@@ -195,11 +201,27 @@ export function createRoomSession(opts: {
   const room = readRoomFile(home, roomId);
   const { key } = deriveRoom(parseShareCode(room.secret));
   const replay = replayQueue(home, roomId);
-  const history = replay.history;
+  /** Envelope ids posted from this machine: own echoes are decided by id, not member name. */
+  const localIds = replay.sentIds;
   const seen = replay.seen;
   const unread = replay.unread;
+  let history: StoredMessage[] = [];
+  /** Trimming dropped messages since the last local human message (see trimHistory). */
+  let cut = replay.cut;
+  const trim = (all: StoredMessage[]) => {
+    const t = trimHistory(all, localIds);
+    const kept = new Set(t.kept.map((m) => m.env.id));
+    for (const m of all) if (!kept.has(m.env.id)) unread.delete(m.env.id);
+    history = t.kept;
+    cut ||= t.cut;
+  };
+  trim(replay.history);
   let lastSeq = replay.lastSeq;
   let queueBytes = replay.bytes;
+  let queueIno = replay.ino;
+  /** Growth since the last compaction; the whole file counts at start. */
+  let grownRecords = replay.records;
+  let grownBytes = replay.bytes;
   let roomName: string | undefined;
   /** Head seq of the first welcome; only messages above it are live enough to notify. */
   let liveAfter: number | undefined;
@@ -227,8 +249,6 @@ export function createRoomSession(opts: {
     string,
     { resolve(seq: number): void; reject(err: Error): void }
   >();
-  /** Envelope ids posted from this machine: own echoes are decided by id, not member name. */
-  const localIds = replay.sentIds;
   const waiters = new Set<() => void>();
   let sendChain: Promise<unknown> = Promise.resolve();
 
@@ -307,6 +327,30 @@ export function createRoomSession(opts: {
       });
   };
 
+  /** The room-wide ceiling count, at least the limit once trimming cut messages it counts. */
+  const ceilingRoomCount = (chain: ChainState) =>
+    cut
+      ? Math.max(chain.ceilingRoom, 2 * threadCeiling(maxAgentChain))
+      : chain.ceilingRoom;
+
+  /**
+   * After trimming dropped messages posted since the last local human message (over HISTORY_MAX
+   * of them), the ceiling counts over the kept window may be short: refuse as the room ceiling.
+   */
+  const cutRefusal = (
+    chain: ChainState,
+    thread: string,
+  ): ChainRefusal | undefined =>
+    cut
+      ? {
+          scope: "room",
+          ceiling: true,
+          count: ceilingRoomCount(chain),
+          limit: 2 * threadCeiling(maxAgentChain),
+          thread,
+        }
+      : undefined;
+
   /** Full status for `room_status`; the only caller that pays for the chain scan. */
   const status = (): RoomStatus => {
     const chain = chainState(ordered(), maxAgentChain, localIds);
@@ -327,7 +371,7 @@ export function createRoomSession(opts: {
       roomAgentRun: { count: chain.room, limit: 2 * maxAgentChain },
       sinceYourLastPost: {
         room: {
-          count: chain.ceilingRoom,
+          count: ceilingRoomCount(chain),
           limit: 2 * threadCeiling(maxAgentChain),
         },
         threadLimit: threadCeiling(maxAgentChain),
@@ -355,12 +399,41 @@ export function createRoomSession(opts: {
   /** Apply `read` and `sent` records other processes (the prompt hook, the CLI) appended. */
   const syncExternalReads = () => {
     if (gone) return;
-    const tail = readQueueTail(home, roomId, queueBytes);
+    const tail = readQueueTail(home, roomId, queueBytes, queueIno);
     queueBytes = tail.bytes;
+    queueIno = tail.ino;
     for (const id of tail.sentIds) localIds.add(id);
     let changed = false;
     for (const id of tail.readIds) changed = unread.delete(id) || changed;
     if (changed) persistStatus();
+  };
+
+  const append = (records: QueueRecord[]) => {
+    grownBytes += appendQueue(home, roomId, records);
+    grownRecords += records.length;
+  };
+
+  /** Rewrite queue.jsonl once it has grown by QUEUE_COMPACT_RECORDS or QUEUE_COMPACT_BYTES. */
+  const maybeCompact = () => {
+    if (gone) return;
+    if (
+      grownRecords < QUEUE_COMPACT_RECORDS &&
+      grownBytes < QUEUE_COMPACT_BYTES
+    ) {
+      return;
+    }
+    syncExternalReads();
+    const r = compactQueue(
+      home,
+      roomId,
+      { history, seen, unread, sentIds: localIds, cut },
+      queueBytes,
+    );
+    if (r === undefined) return; // The prompt hook holds the lock; retry on the next message.
+    queueBytes = r.bytes;
+    queueIno = r.ino;
+    grownRecords = 0;
+    grownBytes = 0;
   };
 
   const wake = () => {
@@ -396,7 +469,7 @@ export function createRoomSession(opts: {
   const post = async (env: Envelope): Promise<number> => {
     const blob = await sealOutbound(env);
     localIds.add(env.id);
-    appendQueue(home, roomId, [{ t: "sent", ids: [env.id] }]);
+    append([{ t: "sent", ids: [env.id] }]);
     const echo = new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         pendingEcho.delete(env.id);
@@ -447,8 +520,9 @@ export function createRoomSession(opts: {
     const own = local && !isHuman(env);
     seen.add(env.id);
     history.push({ seq, env, own });
+    if (local && isHuman(env)) cut = false;
     const record: QueueRecord = { t: "msg", seq, env, own };
-    appendQueue(home, roomId, [record]);
+    append([record]);
     noteMember(env);
     if (pending) {
       pendingEcho.delete(env.id);
@@ -458,6 +532,8 @@ export function createRoomSession(opts: {
       wake();
       if (!local) maybeNotify(seq, env);
     }
+    if (history.length > HISTORY_MAX) trim(history);
+    maybeCompact();
     persistStatus();
   };
 
@@ -630,9 +706,7 @@ export function createRoomSession(opts: {
     if (batch.length > 0) {
       for (const m of batch) unread.delete(m.env.id);
       if (!gone) {
-        appendQueue(home, roomId, [
-          { t: "read", ids: batch.map((m) => m.env.id) },
-        ]);
+        append([{ t: "read", ids: batch.map((m) => m.env.id) }]);
         persistStatus();
       }
       parts.push(
@@ -670,10 +744,9 @@ export function createRoomSession(opts: {
         syncExternalReads();
         const hist = ordered();
         const env = build(input, "mcp", hist);
-        const refusal = checkChain(
-          chainState(hist, maxAgentChain, localIds),
-          env.thread,
-        );
+        const chain = chainState(hist, maxAgentChain, localIds);
+        const refusal =
+          checkChain(chain, env.thread) ?? cutRefusal(chain, env.thread);
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
         return { id: env.id, seq };

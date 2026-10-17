@@ -11,6 +11,7 @@ import {
   readSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -27,6 +28,10 @@ export const AgentName = z.enum([
   "other",
 ]);
 export type AgentName = z.infer<typeof AgentName>;
+
+/** The one comparison against the human tag in this package; the seal path refuses it (invariant 2). */
+export const isHuman = (env: Envelope) =>
+  (env.from.agent as string) === "human";
 
 export const RoomFile = z.object({
   v: z.literal(1),
@@ -52,6 +57,15 @@ export const QueueRecord = z.discriminatedUnion("t", [
   z.object({ t: z.literal("read"), ids: z.array(z.string()) }),
   /** Ids posted from this machine, written before the put so the echo is recognized as own. */
   z.object({ t: z.literal("sent"), ids: z.array(z.string()) }),
+  /**
+   * Written by compaction: ids of dropped messages, kept so a replayed envelope is still
+   * recognized, and `cut` when messages since the last local human message were dropped.
+   */
+  z.object({
+    t: z.literal("seen"),
+    ids: z.array(z.string()),
+    cut: z.boolean().optional(),
+  }),
 ]);
 export type QueueRecord = z.infer<typeof QueueRecord>;
 
@@ -129,17 +143,19 @@ export function clearCurrentIf(home: string, roomId: string): void {
   if (readCurrent(home) === roomId) rmSync(currentPath(home), { force: true });
 }
 
-/** Append records with one O_APPEND write. */
+const queuePath = (home: string, roomId: string) =>
+  join(roomDir(home, roomId), "queue.jsonl");
+
+/** Append records with one O_APPEND write; returns the bytes written. */
 export function appendQueue(
   home: string,
   roomId: string,
   records: QueueRecord[],
-): void {
-  if (records.length === 0) return;
+): number {
+  if (records.length === 0) return 0;
   const lines = records.map((r) => `${JSON.stringify(r)}\n`).join("");
-  appendFileSync(join(roomDir(home, roomId), "queue.jsonl"), lines, {
-    mode: 0o600,
-  });
+  appendFileSync(queuePath(home, roomId), lines, { mode: 0o600 });
+  return Buffer.byteLength(lines);
 }
 
 export interface Replay {
@@ -151,6 +167,12 @@ export interface Replay {
   lastSeq: number;
   /** Bytes of queue.jsonl up to the last complete line; reading resumes here. */
   bytes: number;
+  /** Complete lines read. */
+  records: number;
+  /** Inode of the file read; compaction replaces the file, so a new inode means read from 0. */
+  ino: number;
+  /** Compaction dropped messages since the last local human message (see trimHistory). */
+  cut: boolean;
 }
 
 /** Rebuild seen ids, history and unread from queue.jsonl. Unparseable lines (a torn tail) are skipped. */
@@ -162,16 +184,26 @@ export function replayQueue(home: string, roomId: string): Replay {
     sentIds: new Set(),
     lastSeq: 0,
     bytes: 0,
+    records: 0,
+    ino: 0,
+    cut: false,
   };
   let buf: Buffer;
   try {
-    buf = readFileSync(join(roomDir(home, roomId), "queue.jsonl"));
+    const fd = openSync(queuePath(home, roomId), "r");
+    try {
+      replay.ino = fstatSync(fd).ino;
+      buf = readFileSync(fd);
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return replay;
   }
   replay.bytes = buf.lastIndexOf(10) + 1;
   for (const line of buf.toString("utf8").split("\n")) {
     if (!line) continue;
+    replay.records++;
     let rec: QueueRecord;
     try {
       rec = QueueRecord.parse(JSON.parse(line));
@@ -185,6 +217,14 @@ export function replayQueue(home: string, roomId: string): Replay {
     if (rec.t === "sent") {
       for (const id of rec.ids) replay.sentIds.add(id);
       continue;
+    }
+    if (rec.t === "seen") {
+      for (const id of rec.ids) replay.seen.add(id);
+      replay.cut = rec.cut === true;
+      continue;
+    }
+    if (isHuman(rec.env) && replay.sentIds.has(rec.env.id)) {
+      replay.cut = false;
     }
     replay.lastSeq = Math.max(replay.lastSeq, rec.seq);
     if (replay.seen.has(rec.env.id)) continue;
@@ -204,23 +244,28 @@ export function readQueueTail(
   home: string,
   roomId: string,
   from: number,
-): { readIds: string[]; sentIds: string[]; bytes: number } {
+  ino?: number,
+): { readIds: string[]; sentIds: string[]; bytes: number; ino: number } {
   // Read only the bytes after `from`: this runs per inbound message, and the queue holds every blob.
+  // When another process compacted the queue (new inode), `from` is meaningless: read from 0.
   let buf: Buffer;
+  let fileIno: number;
   try {
-    const fd = openSync(join(roomDir(home, roomId), "queue.jsonl"), "r");
+    const fd = openSync(queuePath(home, roomId), "r");
     try {
-      const size = fstatSync(fd).size;
-      buf = Buffer.alloc(Math.max(0, size - from));
+      const st = fstatSync(fd);
+      fileIno = st.ino;
+      if (ino !== undefined && ino !== fileIno) from = 0;
+      buf = Buffer.alloc(Math.max(0, st.size - from));
       buf = buf.subarray(0, readSync(fd, buf, 0, buf.length, from));
     } finally {
       closeSync(fd);
     }
   } catch {
-    return { readIds: [], sentIds: [], bytes: from };
+    return { readIds: [], sentIds: [], bytes: from, ino: ino ?? 0 };
   }
   const end = buf.lastIndexOf(10) + 1;
-  if (end === 0) return { readIds: [], sentIds: [], bytes: from };
+  if (end === 0) return { readIds: [], sentIds: [], bytes: from, ino: fileIno };
   const readIds: string[] = [];
   const sentIds: string[] = [];
   for (const line of buf.subarray(0, end).toString("utf8").split("\n")) {
@@ -233,7 +278,114 @@ export function readQueueTail(
       // Unparseable line: skipped, as in replayQueue.
     }
   }
-  return { readIds, sentIds, bytes: from + end };
+  return { readIds, sentIds, bytes: from + end, ino: fileIno };
+}
+
+/** In-memory history keeps at least this many envelopes... */
+export const HISTORY_KEEP = 2_000;
+/** ...and at most this many, even when the last local human message is older. */
+export const HISTORY_MAX = 5_000;
+/** Compact queue.jsonl after this many records or bytes appended since the last compaction. */
+export const QUEUE_COMPACT_RECORDS = 5_000;
+export const QUEUE_COMPACT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The envelopes to keep, in seq order: the last HISTORY_KEEP, or everything since the last human
+ * message posted from this machine when that is more (the hard chain ceiling counts from there),
+ * never more than HISTORY_MAX. `cut` is true when that cap dropped messages posted after the last
+ * local human message (or there is none), so the ceiling counts over `kept` may be short; the
+ * session then treats the room-wide ceiling as reached.
+ */
+export function trimHistory(
+  history: StoredMessage[],
+  localIds: ReadonlySet<string>,
+): { kept: StoredMessage[]; cut: boolean } {
+  const sorted = [...history].sort((a, b) => a.seq - b.seq);
+  let since = sorted.length;
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const env = (sorted[i] as StoredMessage).env;
+    if (isHuman(env) && localIds.has(env.id)) {
+      since = sorted.length - i;
+      break;
+    }
+  }
+  const keep = Math.min(HISTORY_MAX, Math.max(HISTORY_KEEP, since));
+  if (keep >= sorted.length) return { kept: sorted, cut: false };
+  return { kept: sorted.slice(sorted.length - keep), cut: since > keep };
+}
+
+/**
+ * Rewrite queue.jsonl atomically with only what still matters: `msg` records for `history`, one
+ * `read` record for its read messages, `sent` ids that are in `history` or not yet echoed, and a
+ * `seen` record for every other seen id. Holds `deliver.lock` so the prompt hook cannot append
+ * meanwhile; records another process appends to the old file after byte `consumed` are copied
+ * over. Returns the new file's inode and the offset to resume tail reads from (before the copied
+ * records, so the caller still applies them), or undefined when the lock is busy.
+ */
+export function compactQueue(
+  home: string,
+  roomId: string,
+  state: {
+    history: StoredMessage[];
+    seen: ReadonlySet<string>;
+    unread: ReadonlySet<string>;
+    sentIds: ReadonlySet<string>;
+    cut: boolean;
+  },
+  consumed: number,
+): { bytes: number; ino: number } | undefined {
+  const dir = roomDir(home, roomId);
+  const lock = join(dir, "deliver.lock");
+  try {
+    closeSync(openSync(lock, "wx", 0o600));
+  } catch {
+    return undefined;
+  }
+  try {
+    const path = queuePath(home, roomId);
+    const old = openSync(path, "r");
+    try {
+      const kept = new Set(state.history.map((m) => m.env.id));
+      const records: QueueRecord[] = state.history.map((m) => ({
+        t: "msg",
+        seq: m.seq,
+        env: m.env,
+        own: m.own,
+      }));
+      records.push({
+        t: "read",
+        ids: state.history
+          .filter((m) => !state.unread.has(m.env.id))
+          .map((m) => m.env.id),
+      });
+      records.push({
+        t: "sent",
+        ids: [...state.sentIds].filter(
+          (id) => kept.has(id) || !state.seen.has(id),
+        ),
+      });
+      records.push({
+        t: "seen",
+        ids: [...state.seen].filter((id) => !kept.has(id)),
+        ...(state.cut ? { cut: true } : {}),
+      });
+      const content = records.map((r) => `${JSON.stringify(r)}\n`).join("");
+      writeAtomic(path, content);
+      const size = fstatSync(old).size;
+      let tail = Buffer.alloc(Math.max(0, size - consumed));
+      tail = tail.subarray(0, readSync(old, tail, 0, tail.length, consumed));
+      tail = tail.subarray(0, tail.lastIndexOf(10) + 1);
+      if (tail.length > 0) appendFileSync(path, tail, { mode: 0o600 });
+      return {
+        bytes: Buffer.byteLength(content),
+        ino: statSync(path).ino,
+      };
+    } finally {
+      closeSync(old);
+    }
+  } finally {
+    rmSync(lock, { force: true });
+  }
 }
 
 export function writeStatus(
