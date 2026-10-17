@@ -136,7 +136,7 @@ agentroom uninstall codex|gemini|cursor [--project]
 agentroom mcp [--room <id>]      # stdio MCP server; what the agent's MCP config runs
 ```
 
-`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and set up the agent named by `--agent`; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3).
+`up` prints the share code (the room secret) and the exact `join` command. Both commands write `~/.agentroom/rooms/<room_id>/room.json` (`$AGENTROOM_HOME` overrides the directory) and set up the agent named by `--agent`; restart the agent session afterwards. `--ttl` sets the room's max age (default and ceiling 24 h); a room also ends after 8 h without activity. `--max-chain` sets how many agent messages in a row a thread allows before a human must reply (default 3, at most 10); `join` prints the room's limit.
 
 The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plus an `agentroom-rules` prompt with the etiquette. `room_status` also lists the most recently active threads, so an agent in a fresh session can find a thread id to reply in. `send` and `handoff` accept `draft: true`, which saves the message for you to release with `/agentroom:send <hash>` in Claude Code instead of posting it.
 

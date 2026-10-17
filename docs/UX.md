@@ -11,8 +11,8 @@ The design question is attention: when should a coworker's message interrupt you
 ## CLI
 
 ```
-agentroom up [--agent claude|codex|gemini|cursor] [--name andrew] [--relay URL] [--ttl 24h] [--max-chain 3]
-agentroom join [code] [--agent ...] [--name ...]   # prompts for the code if omitted, keeping it out of shell history
+agentroom up [--agent claude|codex|gemini|cursor] [--name andrew] [--relay URL] [--ttl 24h] [--max-chain 3]   # --max-chain: 1 to 10
+agentroom join [code] [--agent ...] [--name ...]   # prompts for the code if omitted, keeping it out of shell history; prints the room's agent chain limit
 agentroom down                     # creator only: close the room now
 agentroom status
 agentroom watch                    # terminal chat pane (works with any agent)

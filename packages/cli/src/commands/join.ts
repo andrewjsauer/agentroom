@@ -10,6 +10,7 @@ import {
 } from "@agentroom/mcp";
 import {
   deriveRoom,
+  MAX_AGENT_CHAIN,
   openMeta,
   parseShareCode,
   ShareCodeError,
@@ -29,6 +30,11 @@ function promptForCode(ctx: CliContext): Promise<string> {
       rl.close();
     });
   });
+}
+
+/** The effective chain limits for this room (soft limit, then the hard ceiling only you can lift). */
+function chainLimitLine(n: number): string {
+  return `Agent chain limit: ${n} per thread, ${2 * n} per room; hard ceiling ${3 * n}/${6 * n} until you post.`;
 }
 
 export async function join(
@@ -69,7 +75,7 @@ export async function join(
     }
     throw new CliError(`relay refused the join: ${res.code} (${res.message})`);
   }
-  await openMeta(res.meta, key, roomId);
+  const meta = await openMeta(res.meta, key, roomId);
 
   const home = agentroomHome(ctx.env);
   const member = values.name || defaultMember();
@@ -96,6 +102,12 @@ export async function join(
     [
       `Joined room ${roomId} as ${member} (${agent}) via ${relay}.`,
       `Expires after ${hoursUntil(res.expiresAt)} h without activity (${new Date(res.expiresAt).toISOString()}).`,
+      ...(meta.clampedFrom === undefined
+        ? []
+        : [
+            `The room asks for an agent chain limit of ${meta.clampedFrom}; agentroom caps it at ${MAX_AGENT_CHAIN}.`,
+          ]),
+      chainLimitLine(meta.maxAgentChain),
       "",
     ].join("\n"),
   );

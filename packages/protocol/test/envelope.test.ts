@@ -69,4 +69,13 @@ describe("RoomMeta", () => {
   test("defaults maxAgentChain to 3", () => {
     expect(RoomMeta.parse({})).toEqual({ maxAgentChain: 3 });
   });
+
+  test("maxAgentChain must be an integer from 1 to 10", () => {
+    for (const bad of [0, 11, 1_000_000, 2.5]) {
+      expect(RoomMeta.safeParse({ maxAgentChain: bad }).success).toBe(false);
+    }
+    for (const ok of [1, 10]) {
+      expect(RoomMeta.parse({ maxAgentChain: ok }).maxAgentChain).toBe(ok);
+    }
+  });
 });

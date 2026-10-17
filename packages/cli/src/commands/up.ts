@@ -10,6 +10,7 @@ import {
   deriveRoom,
   generateCloseKeyPair,
   generateShareCode,
+  MAX_AGENT_CHAIN,
   sealMeta,
 } from "@agentroom/protocol";
 import { type CliContext, CliError, parseAgent } from "../context.js";
@@ -59,8 +60,15 @@ export async function up(
   let maxAgentChain = 3;
   if (values["max-chain"] !== undefined) {
     maxAgentChain = Number(values["max-chain"]);
-    if (!Number.isInteger(maxAgentChain) || maxAgentChain < 1) {
-      throw new CliError("--max-chain must be a positive integer", 2);
+    if (
+      !Number.isInteger(maxAgentChain) ||
+      maxAgentChain < 1 ||
+      maxAgentChain > MAX_AGENT_CHAIN
+    ) {
+      throw new CliError(
+        `--max-chain must be a whole number from 1 to ${MAX_AGENT_CHAIN}`,
+        2,
+      );
     }
   }
 

@@ -472,6 +472,11 @@ export function createRoomSession(opts: {
       metaRead ??= openMeta(w.meta, key, roomId).then(
         (m) => {
           maxAgentChain = m.maxAgentChain;
+          if (m.clampedFrom !== undefined) {
+            process.stderr.write(
+              `agentroom: the room asks for an agent chain limit of ${m.clampedFrom}; using ${m.maxAgentChain}\n`,
+            );
+          }
           if (m.name !== undefined) {
             roomName = stripControl(m.name).slice(0, ROOM_NAME_CHARS);
           }

@@ -143,7 +143,7 @@ Notes:
 
 ## Chain limit (lives in `protocol`, enforced in `mcp`)
 
-For a thread, count consecutive envelopes of kind `question`, `answer`, `decision`, `handoff` or `fyi` with `from.agent != "human"` since the last human-authored envelope in that thread (any kind, `approve` included). `presence` envelopes are ignored. If the count is at or above `maxAgentChain` (default 3, set by the creator and shared through room `meta`), the MCP `send` tool refuses with:
+For a thread, count consecutive envelopes of kind `question`, `answer`, `decision`, `handoff` or `fyi` with `from.agent != "human"` since the last human-authored envelope in that thread (any kind, `approve` included). `presence` envelopes are ignored. If the count is at or above `maxAgentChain` (default 3, a whole number from 1 to 10, set by the creator and shared through room `meta`; a joiner that reads a larger value from an older creator clamps it to 10 and says so, and `join` prints the room's effective limits), the MCP `send` tool refuses with:
 
 > This thread needs a human. N agent messages in a row without a human reply. Ask your user to respond with /say or approve with /approve.
 

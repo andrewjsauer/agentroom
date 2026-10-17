@@ -2,7 +2,7 @@ import { hkdfSync } from "node:crypto";
 import sodium from "libsodium-wrappers";
 import type { z } from "zod";
 import { Envelope, type EnvelopeInput } from "./envelope.js";
-import { RoomMeta } from "./meta.js";
+import { OpenedRoomMeta, RoomMeta } from "./meta.js";
 import { assertNoSecrets } from "./secrets.js";
 
 const NONCE_BYTES = 24;
@@ -113,12 +113,13 @@ export async function sealMeta(
   return sealJson(RoomMeta.parse(meta), key, roomId);
 }
 
+/** Open room meta; a limit above `MAX_AGENT_CHAIN` (an older creator) is clamped, see `clampedFrom`. */
 export function openMeta(
   blob: string,
   key: Uint8Array,
   roomId: string,
-): Promise<RoomMeta> {
-  return openJson(RoomMeta, blob, key, roomId);
+): Promise<OpenedRoomMeta> {
+  return openJson(OpenedRoomMeta, blob, key, roomId);
 }
 
 /** Ed25519 keypair for creator-only close. Base64 keys. */

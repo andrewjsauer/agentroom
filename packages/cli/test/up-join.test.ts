@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
-import { readCurrent, readRoomFile, roomDir } from "@agentroom/mcp";
+import { oneShot, readCurrent, readRoomFile, roomDir } from "@agentroom/mcp";
 import {
   deriveRoom,
+  generateCloseKeyPair,
   generateShareCode,
   parseShareCode,
 } from "@agentroom/protocol";
@@ -11,6 +12,7 @@ import {
   type RelayHandle,
   startRelay,
 } from "@agentroom/relay-node";
+import sodium from "libsodium-wrappers";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { main } from "../src/index.js";
 import { codeFrom, makeCtx, remove, tempDir } from "./helpers.js";
@@ -108,6 +110,9 @@ test("join writes room.json for the joiner with its own member and agent (no clo
   });
   expect(room.closeSecretKey).toBeUndefined();
   expect(b.out()).toContain(`Joined room ${roomId} as bob (codex)`);
+  expect(b.out()).toContain(
+    "Agent chain limit: 3 per thread, 6 per room; hard ceiling 9/18 until you post.",
+  );
   // Codex gets the user-scope adapter install (temp HOME), with no room id in the entry.
   const codexConfig = joinPath(hB, ".codex", "config.toml");
   expect(b.out()).toContain(`Updated ${codexConfig}`);
@@ -211,12 +216,67 @@ test("up against an unreachable relay prints an error and writes nothing", async
   expect(readCurrent(h)).toBeUndefined();
 });
 
-test("up --max-chain must be a positive integer", async () => {
-  const t = makeCtx(home());
-  expect(
-    await main(["up", "--relay", relay.url, "--max-chain", "0"], t.ctx),
-  ).toBe(2);
+test("up --max-chain must be a whole number from 1 to 10", async () => {
+  for (const bad of ["0", "11", "1000000", "2.5"]) {
+    const t = makeCtx(home());
+    expect(
+      await main(["up", "--relay", relay.url, "--max-chain", bad], t.ctx),
+    ).toBe(2);
+    expect(t.err()).toContain(
+      "--max-chain must be a whole number from 1 to 10",
+    );
+  }
   expect(events.filter((e) => e.event === "conn_open")).toHaveLength(0);
+});
+
+test("join prints the creator's chain limit and its hard ceiling", async () => {
+  const a = makeCtx(home());
+  expect(
+    await main(["up", "--relay", relay.url, "--max-chain", "10"], a.ctx),
+  ).toBe(0);
+  const b = makeCtx(home());
+  expect(
+    await main(["join", codeFrom(a.out()), "--relay", relay.url], b.ctx),
+  ).toBe(0);
+  expect(b.out()).toContain(
+    "Agent chain limit: 10 per thread, 20 per room; hard ceiling 30/60 until you post.",
+  );
+  expect(b.out()).not.toContain("caps it");
+});
+
+test("join clamps an older creator's out-of-range chain limit to 10 and says so", async () => {
+  const { code, secret } = generateShareCode();
+  const { roomId, key } = deriveRoom(secret);
+  await sodium.ready;
+  const nonce = sodium.randombytes_buf(24);
+  const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+    JSON.stringify({ maxAgentChain: 1_000_000 }),
+    roomId,
+    null,
+    nonce,
+    key,
+  );
+  const meta = Buffer.concat([nonce, ct]).toString("base64");
+  const { publicKey } = await generateCloseKeyPair();
+  const res = await oneShot({
+    url: relay.url,
+    hello: {
+      t: "hello",
+      room: roomId,
+      proto: 1,
+      create: { closeKey: publicKey, meta },
+    },
+  });
+  expect(res.t).toBe("welcome");
+
+  const b = makeCtx(home());
+  expect(await main(["join", code, "--relay", relay.url], b.ctx)).toBe(0);
+  expect(b.out()).toContain(
+    "The room asks for an agent chain limit of 1000000; agentroom caps it at 10.",
+  );
+  expect(b.out()).toContain(
+    "Agent chain limit: 10 per thread, 20 per room; hard ceiling 30/60 until you post.",
+  );
 });
 
 test("up --ttl sends maxAgeSec and prints the max-age deadline", async () => {

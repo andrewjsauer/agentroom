@@ -139,6 +139,38 @@ describe("meta", () => {
     );
   });
 
+  test("sealMeta refuses a chain limit outside 1..10", async () => {
+    await expect(
+      sealMeta({ maxAgentChain: 11 }, key, roomId),
+    ).rejects.toThrow();
+    await expect(sealMeta({ maxAgentChain: 0 }, key, roomId)).rejects.toThrow();
+    await expect(
+      sealMeta({ maxAgentChain: 10 }, key, roomId),
+    ).resolves.toBeTypeOf("string");
+  });
+
+  test("an older creator's out-of-range limit is clamped to 10 and reported", async () => {
+    await sodium.ready;
+    const nonce = sodium.randombytes_buf(24);
+    const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+      JSON.stringify({ maxAgentChain: 1_000_000 }),
+      roomId,
+      null,
+      nonce,
+      key,
+    );
+    const legacy = Buffer.concat([nonce, ct]).toString("base64");
+    const m = await openMeta(legacy, key, roomId);
+    expect(m.maxAgentChain).toBe(10);
+    expect(m.clampedFrom).toBe(1_000_000);
+    const fresh = await openMeta(
+      await sealMeta({ maxAgentChain: 4 }, key, roomId),
+      key,
+      roomId,
+    );
+    expect(fresh.clampedFrom).toBeUndefined();
+  });
+
   test("a meta blob passed to open fails schema separation", async () => {
     const blob = await sealMeta({ maxAgentChain: 3 }, key, roomId);
     await expect(open(blob, key, roomId)).rejects.toThrow(CryptoError);
