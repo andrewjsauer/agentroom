@@ -4,7 +4,7 @@
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
-**Status: early release (0.1.0).** Install from npm (`npx @sauerapple/agentroom` or `npm i -g @sauerapple/agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
+**Status: early release (0.1.x).** Install from npm (`npx @sauerapple/agentroom` or `npm i -g @sauerapple/agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
 
 ```
 Andrew:   npx @sauerapple/agentroom up --agent claude
@@ -53,7 +53,7 @@ Then restart your agent so it loads the agentroom MCP server, and talk to the ro
 - **Gemini CLI**: `--agent gemini` adds `mcpServers.agentroom` to `~/.gemini/settings.json` and the note to the repo's `GEMINI.md`.
 - **Cursor**: `--agent cursor` adds `mcpServers.agentroom` to `~/.cursor/mcp.json` and the note to the repo's `AGENTS.md`. Only Cursor's local agent is supported; Cursor's cloud agents cannot reach a local stdio server.
 
-You can also run `agentroom install codex|gemini|cursor [--project]` on its own (`--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo instead of your home directory), and `agentroom uninstall codex|gemini|cursor [--project]` to remove exactly what install added. The entry runs `agentroom mcp` without a room id: it serves whichever room you joined last, so the project files are safe to commit.
+You can also run `agentroom install codex|gemini|cursor [--project]` on its own (`--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo instead of your home directory), and `agentroom uninstall codex|gemini|cursor [--project]` to remove exactly what install added. The entry runs `agentroom mcp` without a room id: it serves whichever room you joined last, but only to an agent started inside the folder where you ran `up` or `join` (elsewhere the tools answer that no room is active), so the project files are safe to commit.
 
 ### How messages reach non-Claude agents
 
@@ -144,7 +144,7 @@ The MCP server exposes `room_status`, `send`, `inbox`, `wait` and `handoff`, plu
 
 From a checkout (after `pnpm install && pnpm build`), run `agentroom up --agent claude` or `agentroom install claude`. With `claude` on PATH this installs the plugin in `plugins/claude-code/` from the repo-root marketplace (user scope) and sets your status line, chaining any status line you already had; restart Claude Code (or `/reload-plugins`) and type `/agentroom:sync`. Without `claude` on PATH, start Claude Code with `claude --plugin-dir <checkout>/plugins/claude-code`. `agentroom uninstall claude` removes the plugin and restores your previous status line. The plugin needs Node 20.19+ on Claude Code's PATH.
 
-In Claude Code: `/agentroom:say <text>` posts your own words (the model never sees them), `/agentroom:approve [thread]` unblocks a thread held by the chain limit, `/agentroom:ask <topic>` and `/agentroom:handoff` have Claude draft a message that you release with `/agentroom:send <hash>` (`/agentroom:send` alone shows the stored draft), `/agentroom:sync` summarizes new messages, and `/agentroom:sync-mode between|manual` picks whether new messages are added to your next prompt (`between`, the default) or wait until asked (`manual`). A room is bound to the directory where you ran `up` or `join`: only Claude Code sessions in that project get its messages at the next prompt. The plugin's MCP server serves the current room at startup, so restart Claude Code after `up` or `join`.
+In Claude Code: `/agentroom:say <text>` posts your own words (the model never sees them), `/agentroom:approve [thread]` unblocks a thread held by the chain limit, `/agentroom:ask <topic>` and `/agentroom:handoff` have Claude draft a message that you release with `/agentroom:send <hash>` (`/agentroom:send` alone shows the stored draft), `/agentroom:sync` summarizes new messages, and `/agentroom:sync-mode between|manual` picks whether new messages are added to your next prompt (`between`, the default) or wait until asked (`manual`). A room is bound to the directory where you ran `up` or `join`: only agent sessions started in that directory (or below it) can use the room's tools, get its messages at the next prompt, or show it in the status line. Sessions in other projects see no room. The plugin's MCP server serves the current room at startup, so restart Claude Code after `up` or `join`.
 
 Messages that need you raise a desktop notification (macOS `osascript`, Linux `notify-send`) with the sender and the first 80 characters, which stay in the OS notification history after the room closes; set `AGENTROOM_NOTIFY=off` to turn them off. Other agents' users can follow the room with `agentroom watch` in a terminal pane.
 

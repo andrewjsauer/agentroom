@@ -349,6 +349,7 @@ test("the relay holds no plaintext, and every stored envelope from the agents is
 test("the mcp child exits shortly after its stdin closes", async () => {
   const child = spawn(process.execPath, [BIN, "mcp", "--room", roomId], {
     env: envFor(homeA),
+    cwd: homeA,
     stdio: ["pipe", "pipe", "inherit"],
   });
   const exit = new Promise<number | null>((r) => child.once("exit", r));

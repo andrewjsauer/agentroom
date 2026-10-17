@@ -41,6 +41,7 @@ async function connectPlugin(home: string): Promise<Client> {
     command: process.execPath,
     args: [LAUNCHER, "mcp"],
     env: envFor(home),
+    cwd: home, // where `cli` ran up/join, so the room is served
     stderr: "inherit",
   });
   transports.push(transport);
@@ -205,11 +206,16 @@ test("the status line shows alice's unread count", async () => {
     "alice to have unread messages",
   );
   // The count can still grow while bob's last send lands, so only its shape is pinned.
-  const r = await runLauncher(["statusline"], fixture("statusline.json"));
+  const r = await runLauncher(["statusline"], {
+    ...fixture("statusline.json"),
+    cwd: project,
+    workspace: { current_dir: project, project_dir: project },
+  });
   expect(r.code).toBe(0);
-  expect(r.out).toMatch(
-    /^agentroom \* [0-9a-f]{8} \| other project \| [1-9]\d* unread/,
-  );
+  expect(r.out).toMatch(/^agentroom \* [0-9a-f]{8} \| [1-9]\d* unread/);
+  // The fixture's own directory is another project: no agentroom segment there.
+  const other = await runLauncher(["statusline"], fixture("statusline.json"));
+  expect(other.out).toBe("\n");
 });
 
 test("human envelopes come only from hook runs; MCP posts are never human", async () => {

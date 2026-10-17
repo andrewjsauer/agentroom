@@ -51,6 +51,8 @@ export async function connectMcp(
     command: process.execPath,
     args: [BIN, "mcp", "--room", roomId],
     env,
+    // Inside the room's project directory (where `cli` ran up/join), as a real agent would be.
+    cwd: env.HOME,
     stderr: "inherit",
   });
   transports.push(transport);

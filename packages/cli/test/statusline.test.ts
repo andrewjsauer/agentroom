@@ -63,7 +63,7 @@ test("the basic segment", () => {
   );
 });
 
-test("roomName, waiting threads, manual mode, and another project", () => {
+test("roomName, waiting threads, manual mode, and nothing in another project", () => {
   expect(
     seg(status({ roomName: "billing", waitingOnHuman: 1 }), {
       delivery: "manual",
@@ -73,12 +73,10 @@ test("roomName, waiting threads, manual mode, and another project", () => {
   );
   expect(
     seg(status(), { room: { ...room, projectDir: "/p" }, cwd: "/q" }),
-  ).toBe(
-    "agentroom * eeeeeeee | other project | 2 unread (1 need you) | bob/codex active",
-  );
+  ).toBe("");
   expect(
     seg(status(), { room: { ...room, projectDir: "/p" }, cwd: "/p/x" }),
-  ).not.toContain("other project");
+  ).toBe("agentroom * eeeeeeee | 2 unread (1 need you) | bob/codex active");
 });
 
 test("stale peers are dropped; three peers show two and +1; names are stripped and cut", () => {

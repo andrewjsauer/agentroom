@@ -30,19 +30,20 @@ export function statusSegment(opts: {
   now: number;
 }): string {
   const { room, status } = opts;
+  // Sessions in other projects cannot reach the room (see `servedRoomId`), so show nothing there.
+  if (
+    room.projectDir !== undefined &&
+    opts.cwd !== undefined &&
+    !isInside(room.projectDir, opts.cwd)
+  ) {
+    return "";
+  }
   if (status?.connection === "gone") return "agentroom * room closed";
   const label =
     status?.roomName !== undefined && status.roomName !== ""
       ? name(status.roomName)
       : room.roomId.slice(0, 8);
   const parts = [`agentroom * ${label}`];
-  if (
-    room.projectDir !== undefined &&
-    opts.cwd !== undefined &&
-    !isInside(room.projectDir, opts.cwd)
-  ) {
-    parts.push("other project");
-  }
   if (status) {
     parts.push(`${status.unread} unread (${status.needsYou} need you)`);
     if (status.waitingOnHuman) {
