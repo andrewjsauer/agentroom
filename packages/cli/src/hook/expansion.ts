@@ -212,6 +212,7 @@ async function run(
   command: Command,
   args: string,
   ctx: CliContext,
+  session: string,
 ): Promise<string> {
   switch (command) {
     case "say":
@@ -220,8 +221,8 @@ async function run(
       return approve(args, ctx);
     case "send":
       return args.trim() === ""
-        ? previewDraft(ctx)
-        : releaseDraft(args.trim(), ctx);
+        ? previewDraft(ctx, session)
+        : releaseDraft(args.trim(), ctx, session);
     case "sync-mode": {
       const { roomId } = loadRoom(undefined, ctx);
       const mode = args.trim();
@@ -269,7 +270,7 @@ export async function promptExpansion(ctx: CliContext): Promise<number> {
   if (command === undefined) return 0;
   let reason: string;
   try {
-    reason = await run(command, input.command_args, ctx);
+    reason = await run(command, input.command_args, ctx, input.session_id);
   } catch (err) {
     reason = `Not sent: ${stripTerminal(err instanceof Error ? err.message : String(err))}`;
   }

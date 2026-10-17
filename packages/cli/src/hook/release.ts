@@ -1,6 +1,6 @@
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { agentroomHome, draftHash, roomDir } from "@agentroom/mcp";
+import { agentroomHome, draftHash, roomDir, writeAtomic } from "@agentroom/mcp";
 import { Envelope, ulid } from "@agentroom/protocol";
 import { type CliContext, loadRoom } from "../context.js";
 import { humanFrom } from "../human.js";
@@ -29,14 +29,35 @@ function readPending(path: string): Stored | undefined {
   return { bytes, hash: parsed.hash, rawEnv: parsed.env };
 }
 
-/** `/agentroom:send` with no hash: the stored draft, read from disk (KTD7, KTD10). */
-export function previewDraft(ctx: CliContext): string {
+const NOT_PREVIEWED =
+  "Not sent: review the draft first. Type /agentroom:send with no hash; it shows the stored draft and the hash to type.";
+
+/** Which draft hash the bare `/agentroom:send` last showed, and in which Claude Code session. */
+const previewPath = (dir: string) => join(dir, "previewed.json");
+
+function previewedIn(dir: string): { hash?: unknown; session?: unknown } {
+  try {
+    return JSON.parse(readFileSync(previewPath(dir), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * `/agentroom:send` with no hash: the stored draft, read from disk (KTD7, KTD10). Records the
+ * shown hash for this session, so a release needs the user to have seen this text, not only
+ * the model's rendering of it.
+ */
+export function previewDraft(ctx: CliContext, session: string): string {
   const { roomId } = loadRoom(undefined, ctx);
-  const stored = readPending(
-    join(roomDir(agentroomHome(ctx.env), roomId), "pending.json"),
-  );
+  const dir = roomDir(agentroomHome(ctx.env), roomId);
+  const stored = readPending(join(dir, "pending.json"));
   if (!stored) return NO_DRAFT;
   const env = Envelope.parse(stored.rawEnv);
+  writeAtomic(
+    previewPath(dir),
+    `${JSON.stringify({ hash: stored.hash, session })}\n`,
+  );
   const hash = safeLine(String(stored.hash));
   let body = safeBody(env.body);
   if (body.length > PREVIEW_CHARS) {
@@ -51,22 +72,29 @@ export function previewDraft(ctx: CliContext): string {
 
 /**
  * `/agentroom:send <hash>` (KTD10): post the stored draft unchanged only when the typed hash,
- * the stored hash and a fresh hash of the stored envelope agree and the envelope is this
- * member's agent draft; then post a human `approve` in its thread and clear the slot.
+ * the stored hash and a fresh hash of the stored envelope agree, a bare `/agentroom:send` showed
+ * this hash in this session, and the envelope is this member's agent draft; then post a human
+ * `approve` in its thread and clear the slot.
  */
 export async function releaseDraft(
   typed: string,
   ctx: CliContext,
+  session: string,
 ): Promise<string> {
   const { roomId, room } = loadRoom(undefined, ctx);
-  const path = join(roomDir(agentroomHome(ctx.env), roomId), "pending.json");
+  const dir = roomDir(agentroomHome(ctx.env), roomId);
+  const path = join(dir, "pending.json");
   const stored = readPending(path);
   if (!stored) return NO_DRAFT;
   if (
     typed.toLowerCase() !== stored.hash ||
     draftHash(stored.rawEnv as Envelope) !== stored.hash
   ) {
-    return `Not sent: the pending draft changed after it was shown (now ${safeLine(String(stored.hash))}). Ask Claude to show it again, or type /agentroom:send to preview it.`;
+    return `Not sent: the pending draft changed after it was shown (now ${safeLine(String(stored.hash))}). Type /agentroom:send to preview it.`;
+  }
+  const shown = previewedIn(dir);
+  if (shown.hash !== stored.hash || shown.session !== session) {
+    return NOT_PREVIEWED;
   }
   const hash = stored.hash as string;
   const env = Envelope.parse(stored.rawEnv);
@@ -85,8 +113,10 @@ export async function releaseDraft(
       return "Not sent: this draft was already sent.";
     }
     await s.post(env);
-    if (readPending(path)?.bytes === stored.bytes)
+    if (readPending(path)?.bytes === stored.bytes) {
       rmSync(path, { force: true });
+      rmSync(previewPath(dir), { force: true });
+    }
     const thread = id8(env.thread);
     try {
       await s.post({

@@ -181,6 +181,9 @@ test("/agentroom:send releases alice's agent draft and a human approve", async (
     draft: true,
   });
   const hash = d.structured.hash as string;
+  // The bare preview prints the stored draft and its hash; a release requires it first.
+  const preview = await expand("send", "");
+  expect(preview.reason).toContain(`Type /agentroom:send ${hash} to send it.`);
   const r = await expand("send", hash);
   expect(r.reason).toMatch(new RegExp(`^Sent draft ${hash} to room`));
   const envs = await relayEnvelopes();

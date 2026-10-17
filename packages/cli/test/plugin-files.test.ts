@@ -101,7 +101,10 @@ test("seven user-only skills; hook-handled bodies say nothing was sent; ask and 
   for (const name of ["ask", "handoff"]) {
     const text = readFileSync(join(PLUGIN, "skills", name, "SKILL.md"), "utf8");
     expect(text).toContain("draft: true");
-    expect(text).toContain("/agentroom:send <hash>");
+    // The user reviews the stored draft with a bare /agentroom:send, which prints the hash.
+    expect(text).toContain("but not its hash");
+    expect(text).toContain("Type `/agentroom:send` to review the stored draft");
+    expect(text).not.toContain("/agentroom:send <hash>");
   }
 });
 
