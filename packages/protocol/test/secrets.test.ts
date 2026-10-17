@@ -197,7 +197,7 @@ const negatives = [
   Buffer.from(
     "This paragraph is ordinary prose about the release plan.",
   ).toString("base64"),
-  "café, naïve, 日本語, and emoji 👩‍💻 in prose",
+  "caf\u00e9, na\u00efve, \u65e5\u672c\u8a9e, and emoji \u{1f469}\u200d\u{1f4bb} in prose",
 ];
 
 describe("secret scanner", () => {
@@ -286,19 +286,19 @@ describe("secret scanner", () => {
 
   test("8000 characters of base64 and zero-width text scan quickly", () => {
     const b64 = Buffer.from("plain words ".repeat(400)).toString("base64");
-    const body = `${b64.slice(0, 6000)} ${"a​b ".repeat(400)}`;
+    const body = `${b64.slice(0, 6000)} ${"a\u200bb ".repeat(400)}`;
     const start = performance.now();
     expect(ruleFor(body)).toBeUndefined();
     expect(performance.now() - start).toBeLessThan(100);
   });
 
   test.each([
-    ["zero-width space", "​"],
-    ["zero-width joiner", "‍"],
-    ["word joiner", "⁠"],
-    ["byte order mark", "﻿"],
-    ["soft hyphen", "­"],
-    ["Arabic letter mark", "؜"],
+    ["zero-width space", "\u200b"],
+    ["zero-width joiner", "\u200d"],
+    ["word joiner", "\u2060"],
+    ["byte order mark", "\ufeff"],
+    ["soft hyphen", "\u00ad"],
+    ["Arabic letter mark", "\u061c"],
     ["Unicode tag", "\u{e0041}"],
   ])("a token split by a %s still blocks", (_name, ch) => {
     const split = [...j("gh", "p_", alnum36)].join(ch);
