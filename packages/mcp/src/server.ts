@@ -141,7 +141,7 @@ async function sendOrDraft(
     return text(renderDraft(d.env, d.hash), { id: d.env.id, hash: d.hash });
   }
   const r = await session.send(input);
-  return text(`Sent ${r.id} as seq ${r.seq}.`, { ...r });
+  return text(`Sent ${r.id} as seq ${r.seq} in thread ${r.thread}.`, { ...r });
 }
 
 /** Register the tools and prompt over one session. Call once per transport; the session outlives it. */

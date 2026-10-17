@@ -75,7 +75,7 @@ const RULES: Rule[] = [
   {
     name: "aws-secret-access-key",
     test: re(
-      /(?:aws)?_?(?:secret)?_?(?:access)?_?key["']?\s*(?::|=>|=)\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/i,
+      /(?:aws[_-]?(?:secret[_-]?)?(?:access[_-]?)?key|secret[_-]?(?:access[_-]?)?key)["']?\s*(?::|=>|=)\s*["']?[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/i,
     ),
     explanation: "It looks like an AWS secret access key assignment.",
   },
@@ -223,6 +223,8 @@ function genericMatch(text: string): boolean {
     const name = m[1] as string;
     const value = m[2] as string;
     if (!/\d/.test(value)) continue;
+    // A git object id (40 or 64 hex) is not a credential; refs carry them and bodies cite them.
+    if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(value)) continue;
     const parts = value.split(/[_.-]/);
     if (
       parts.length > 1 &&

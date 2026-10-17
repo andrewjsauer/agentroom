@@ -189,7 +189,7 @@ export interface RoomSession {
   /** Loaded room.json; mutable only so the invariant 2 guard can be tested. */
   room: RoomFile;
   status(): RoomStatus;
-  send(input: SendInput): Promise<{ id: string; seq: number }>;
+  send(input: SendInput): Promise<{ id: string; seq: number; thread: string }>;
   /** Resolve the thread, scan, and write pending.json instead of posting (KTD16). No chain check. */
   draft(input: SendInput): { env: Envelope; hash: string };
   inbox(opts?: { thread?: string; limit?: number }): string;
@@ -799,7 +799,7 @@ export function createRoomSession(opts: {
           checkChain(chain, env.thread) ?? cutRefusal(chain, env.thread);
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
-        return { id: env.id, seq };
+        return { id: env.id, seq, thread: env.thread };
       };
       const result = sendChain.then(run, run);
       sendChain = result.catch(() => {});

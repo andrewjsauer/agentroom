@@ -385,14 +385,22 @@ describe("sweepExpiredRooms", () => {
   const A = "a".repeat(64);
   const B = "b".repeat(64);
 
-  test("deletes rooms over an hour past expiresAt and clears current; keeps the rest", () => {
+  test("deletes rooms over an hour past expiresAt and the max age, clears current; keeps the rest", () => {
     const now = Date.now();
+    const old = (now - 25 * 3_600_000 - 1_000) / 1000;
     make(A);
     writeStatus(home, A, status(now - SWEEP_GRACE_MS - 1));
+    utimesSync(join(roomDir(home, A), "room.json"), old, old);
     make(B);
     writeStatus(home, B, status(now - SWEEP_GRACE_MS + 60_000));
+    utimesSync(join(roomDir(home, B), "room.json"), old, old);
+    // Stale expiry but joined less than 24 h ago: others may have kept the room alive.
+    const C = "c".repeat(64);
+    make(C);
+    writeStatus(home, C, status(now - 10 * 3_600_000));
     setCurrent(home, A);
     expect(sweepExpiredRooms(home, now)).toEqual([A]);
+    expect(existsSync(roomDir(home, C))).toBe(true);
     expect(existsSync(roomDir(home, A))).toBe(false);
     expect(readCurrent(home)).toBeUndefined();
     // Inside the grace hour: the queue is still there for export.

@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -253,6 +254,9 @@ test("export works within the grace hour after expiry; later any command sweeps 
     ...status,
     expiresAt: Date.now() - 2 * 3_600_000,
   });
+  // The sweep also waits for the relay's 24 h max age counted from room.json.
+  const old = (Date.now() - 25 * 3_600_000 - 1_000) / 1000;
+  utimesSync(join(home, "rooms", ROOM, "room.json"), old, old);
   const after = tty();
   await main(["sync-mode"], after.ctx); // Any command but help and version sweeps first.
   expect(existsSync(join(home, "rooms", ROOM))).toBe(false);

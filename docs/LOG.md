@@ -146,3 +146,27 @@ Waiting on Andrew:
 - ~~Deploy a relay and set the default relay URL.~~ Done 2026-10-17: relay-cf deployed to `wss://agentroom-relay.sauerapple.workers.dev` (smoke-tested with `up`/`join`/`status`/`down`) and set as the CLI default.
 - Real two-person test with the coworker (M1 and M3 acceptance) and the manual pre-release checklist with Codex and Gemini (`docs/RELEASE_CHECKLIST.md`).
 - Create the GitHub repo (fill in the README clone URL), record the demo GIF, publish `agentroom` to npm, tag v0.1.0.
+
+## 2026-10-17: security audit and hardening, 0.2.0
+
+Four Opus 5.5 reviewers audited crypto/protocol, relay abuse limits, MCP agent safety, and CLI/plugin/supply chain (relay probed locally only). No Critical findings; the encryption, key derivation, share code, close signature and inbound framing held under probing; git history, the npm tarball and production dependencies were clean. Three High findings, all fixed in this release:
+
+- Public relay had per-room limits but no per-address or global bound (reconnect refilled the rate bucket; unlimited rooms/rows on the owner's Cloudflare account).
+- Any room member could reset the agent-chain limit by posting a fake human-tagged message.
+- Self-hosted relay-node could be run out of memory by one client.
+
+Fixes landed as five builder tiers in worktrees, merged by hand, then a review pass (one more scanner bypass fixed):
+
+1. Relay: per-address put budget kept across reconnects; per-address connection cap per room (10); Worker-level per-IP upgrade limit via the Cloudflare `ratelimits` binding (60/min, HTTP 429); Origin header refused; hello timeout 10 s; keepalive (welcome.ping, client pings, relay-cf idle close 2 min, relay-node ping/pong); disconnect after 20 refusals; size check before parsing; paged replay; relay-node global caps (1000 rooms, 2000 conns, 32 per IP, 256 MiB buffered, 2 MiB send buffer, empty-room TTL 15 min); close-only connections no longer evict, so a room-id holder cannot block `down` (the old ARCHITECTURE claim was false and is corrected).
+2. Chain limit: hard ceiling 3N per thread / 6N room-wide counted since the last human message posted from this machine; only the local user's say/approve lifts it; survives restarts; shown in room_status. `--max-chain` capped at 10, clamped on join and printed.
+3. Scanner and framing: 28 rules (adds Anthropic, OpenAI, GitLab, npm, Hugging Face, SendGrid, Stripe test, credentials in URLs, Slack webhooks, agentroom share codes, short password=); scans after NFKC and format-character removal, once-decoded base64, URL-decoded; git SHAs under generic names pass. stripControl removes whole ANSI sequences, all Cc/Cf and the Tag block from names, ids, refs and bodies; lookalike framing tags escaped on a folded view.
+4. Bounds: ts/expiresAt bounded; ids and names 64, ref fields 128/512/64/64, repo-relative paths; inbox/wait 9,000-character budget marking only returned messages read; history 2,000 (5,000 max) with a `cut` flag that holds the room ceiling; queue.jsonl compaction; notifications throttled to one per 10 s per room; local room data swept an hour after the later of the recorded expiry and 24 h from join; relay client maxPayload, stripped error text, backoff reset only after 30 s live.
+5. CLI: wss:// required unless loopback; no `npx` written into agent configs (absolute node + entry; npx-cache entries copied to `$AGENTROOM_HOME/bin/<version>/`); uninstall removes the MCP registration and `.mcp.json` entry; settings.json written through symlinks with mode kept; TOML writer handles arrays and escaped strings; relay/peer text stripped before terminal output; expansion hook requires session_id, cwd, event names and a transcript under the Claude config dir (still forgeable by an agent with a shell, now documented); draft release requires a bare `/agentroom:send` preview in the same session; `--name` capped at 64; `up` suggests the prompted `join`; CI actions pinned by SHA.
+
+Tests: protocol 302, relay-node 40, mcp 122, cli 200, conformance 58 (722, from 465); typecheck and Biome clean. Two-agent E2E on a local relay with the new build: Q&A, chain limit refusal, AWS and Anthropic keys blocked, human path refused under CLAUDECODE, no plaintext on the relay.
+
+Not fixed, by decision: dangling-symlink config targets are replaced by a regular file; a microsecond compaction race could drop one CLI `sent` id; IPv6 addresses are limited individually; `RATE_BURST/RATE_PER_SEC` above 10 s would let a Durable Object hibernation refill the bucket (documented). Dev-only vitest/esbuild advisories remain (tsup 9 needs Node 22.18+).
+
+Compatibility: a 0.1.2 client works on the new relay but is disconnected and reconnects every 2 minutes on relay-cf until updated; a new client works on an old relay. New clients drop old-client messages with names over 64 characters or absolute ref paths (counted as decrypt failures).
+
+Waiting on Andrew: deploy relay-cf (the `ratelimits` binding needs a deploy), publish 0.2.0, set a Cloudflare budget alert, tell Lim to upgrade.

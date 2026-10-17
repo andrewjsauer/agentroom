@@ -460,9 +460,10 @@ const MAX_ROOM_AGE_MS = 24 * 3_600_000;
 
 /**
  * Delete local room dirs (secret, decrypted queue) whose room expired over an hour ago, and clear
- * `current` if it named one. The expiry is status.json's `expiresAt` (from the relay's welcome,
- * pushed forward on activity by the MCP server); with none, room.json's mtime plus the 24 h max
- * age. Undatable dirs are left alone. Returns the swept room ids; never throws.
+ * `current` if it named one. The expiry is the later of status.json's `expiresAt` (from the
+ * relay's welcome, pushed forward on activity by the MCP server) and room.json's mtime plus the
+ * 24 h max age, so a room others kept alive while this machine was offline is not swept early.
+ * Undatable dirs are left alone. Returns the swept room ids; never throws.
  */
 export function sweepExpiredRooms(
   home: string,
@@ -478,12 +479,12 @@ export function sweepExpiredRooms(
   for (const id of ids) {
     if (!RoomId.safeParse(id).success) continue;
     try {
-      let expiresAt = readStatus(home, id)?.expiresAt ?? null;
-      if (expiresAt === null) {
-        expiresAt =
-          statSync(join(roomDir(home, id), "room.json")).mtimeMs +
-          MAX_ROOM_AGE_MS;
-      }
+      // The recorded expiry can be stale when this machine was offline while others kept the
+      // room alive, so never sweep before the relay's max age has passed since up/join.
+      const maxAge =
+        statSync(join(roomDir(home, id), "room.json")).mtimeMs +
+        MAX_ROOM_AGE_MS;
+      const expiresAt = Math.max(readStatus(home, id)?.expiresAt ?? 0, maxAge);
       if (now <= expiresAt + SWEEP_GRACE_MS) continue;
       deleteRoomDir(home, id);
       clearCurrentIf(home, id);

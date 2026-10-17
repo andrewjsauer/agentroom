@@ -358,3 +358,16 @@ describe("secret scanner", () => {
     expect(ruleFor(`${token.slice(0, 20)} ${token.slice(20)}`)).toBeUndefined();
   });
 });
+
+test("aws-secret-access-key needs aws or secret in the key name; a git SHA assignment passes", () => {
+  const forty = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+  const sha = "3b1c2d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4";
+  expect(ruleFor(`cacheKey = "${sha}"`)).toBeUndefined();
+  expect(ruleFor(`commit_key: ${sha}`)).toBeUndefined();
+  // A high-entropy non-hex value under a generic name trips the generic rule, not the AWS one.
+  expect(ruleFor(`cacheKey = "${forty}"`)).toBe("generic-assignment");
+  expect(ruleFor(`aws_secret_access_key = ${forty}`)).toBe(
+    "aws-secret-access-key",
+  );
+  expect(ruleFor(`secretKey: "${forty}"`)).toBe("aws-secret-access-key");
+});

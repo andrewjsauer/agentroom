@@ -4,7 +4,7 @@
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
-**Status: early release (0.1.x).** Install from npm (`npx @sauerapple/agentroom` or `npm i -g @sauerapple/agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
+**Status: early release (0.2.x).** Install from npm (`npx @sauerapple/agentroom` or `npm i -g @sauerapple/agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
 
 ```
 Andrew:   npx @sauerapple/agentroom up --agent claude
@@ -198,7 +198,7 @@ pnpm install
 pnpm --filter @agentroom/relay-cf exec wrangler deploy
 ```
 
-The room limits are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names and defaults as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_ROOM_CONNS_PER_IP`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`, `HELLO_TIMEOUT_MS`, `PING_INTERVAL_MS`), plus `MEMBER_IDLE_MS` (`120000`: a member that sends nothing, not even a keepalive ping, for 2 minutes is disconnected). A value that is not a positive integer makes every connection fail with HTTP 500 and a log line naming the variable. The relay-node-only caps do not apply: each room is its own Durable Object, rooms are not held in one process's memory, and a non-reading client only fills its own socket. Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object.
+The room limits are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names and defaults as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_ROOM_CONNS_PER_IP`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`, `HELLO_TIMEOUT_MS`, `PING_INTERVAL_MS`), plus `MEMBER_IDLE_MS` (`120000`: a member that sends nothing, not even a keepalive ping, for 2 minutes is disconnected). Keep `RATE_BURST / RATE_PER_SEC` at or below 10 s: the per-address bucket lives in Durable Object memory, which is discarded after 10 s without events, so a longer refill time would let a reconnect after that pause start with a full bucket. A value that is not a positive integer makes every connection fail with HTTP 500 and a log line naming the variable. The relay-node-only caps do not apply: each room is its own Durable Object, rooms are not held in one process's memory, and a non-reading client only fills its own socket. Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object.
 
 What the relay itself enforces against abuse, per client address (`CF-Connecting-IP`):
 
