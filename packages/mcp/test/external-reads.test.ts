@@ -138,7 +138,7 @@ test("status.json carries waitingOnHuman and a stripped, bounded roomName", asyn
   await until(() => s.status().unread === 3);
   await until(() => readStatus(home, room.roomId)?.waitingOnHuman === 1);
   const st = readStatus(home, room.roomId);
-  expect(st?.roomName).toBe(`[31m${"n".repeat(28)}`);
+  expect(st?.roomName).toBe("n".repeat(32));
 });
 
 test("an older status.json without the new fields still parses", () => {
