@@ -1,8 +1,10 @@
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -25,7 +27,9 @@ import {
   readStatus,
   replayQueue,
   roomDir,
+  SWEEP_GRACE_MS,
   setCurrent,
+  sweepExpiredRooms,
   trimHistory,
   writeRoomFile,
   writeStatus,
@@ -359,6 +363,61 @@ describe("compactQueue", () => {
     const r = replayQueue(home, ROOM);
     expect(r.seen.has("OLD")).toBe(true);
     expect(r.cut).toBe(false);
+  });
+});
+
+describe("sweepExpiredRooms", () => {
+  const status = (expiresAt: number | null) => ({
+    connection: "live" as const,
+    connections: 1,
+    members: [],
+    unread: 0,
+    needsYou: 0,
+    decryptFailures: 0,
+    expiresAt,
+    lastSeq: 0,
+    updatedAt: 0,
+  });
+  const make = (id: string) => {
+    writeRoomFile(home, { ...room, roomId: id });
+    appendQueue(home, id, [{ t: "msg", seq: 1, env: env("A"), own: false }]);
+  };
+  const A = "a".repeat(64);
+  const B = "b".repeat(64);
+
+  test("deletes rooms over an hour past expiresAt and clears current; keeps the rest", () => {
+    const now = Date.now();
+    make(A);
+    writeStatus(home, A, status(now - SWEEP_GRACE_MS - 1));
+    make(B);
+    writeStatus(home, B, status(now - SWEEP_GRACE_MS + 60_000));
+    setCurrent(home, A);
+    expect(sweepExpiredRooms(home, now)).toEqual([A]);
+    expect(existsSync(roomDir(home, A))).toBe(false);
+    expect(readCurrent(home)).toBeUndefined();
+    // Inside the grace hour: the queue is still there for export.
+    expect(replayQueue(home, B).history).toHaveLength(1);
+  });
+
+  test("without an expiry, room.json older than the 24 h max age plus an hour is swept", () => {
+    const now = Date.now();
+    make(A);
+    make(B);
+    writeStatus(home, B, status(null));
+    const old = (now - 25 * 3_600_000 - 1_000) / 1000;
+    utimesSync(join(roomDir(home, A), "room.json"), old, old);
+    setCurrent(home, B);
+    expect(sweepExpiredRooms(home, now)).toEqual([A]);
+    expect(existsSync(roomDir(home, B))).toBe(true);
+    expect(readCurrent(home)).toBe(B);
+  });
+
+  test("ignores other names and undatable dirs, and a missing rooms dir", () => {
+    expect(sweepExpiredRooms(home)).toEqual([]);
+    mkdirSync(join(home, "rooms", "notes"), { recursive: true });
+    mkdirSync(roomDir(home, A), { recursive: true });
+    expect(sweepExpiredRooms(home, Date.now() + 100 * 3_600_000)).toEqual([]);
+    expect(existsSync(roomDir(home, A))).toBe(true);
   });
 });
 

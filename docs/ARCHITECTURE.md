@@ -172,7 +172,7 @@ Launched by the agent as a stdio server: `agentroom mcp --room <room_id>`.
 - The watch pane is one more relay connection per member; it keeps everything in memory and writes nothing locally. Seen envelope ids live in the queue, so a replayed envelope (same id, new seq) is dropped even after a restart.
 - Short-lived commands (`say`, `approve`, `status`, `down`, and the expansion hook for `/agentroom:say`, `approve` and `send`) open a one-shot relay connection using `room.json`. `export` opens none: it reads only the local `queue.jsonl`, so it needs a room directory (an MCP server ran here and the room has not closed or expired).
 - On startup the MCP server fetches `since=0` to rebuild thread history for the chain limit and unread state.
-- The whole `<room>/` directory is deleted on `down` or when the room is found expired. It is a session cache, not a log; durable copies exist only when the user runs `export`.
+- The whole `<room>/` directory is deleted on `down` or when the room is found expired. So that it never outlives an expired room no client is connected to, every MCP server start and every CLI command except `help` and `version` (hooks included) first sweeps `rooms/`: a room dir is deleted, and `current` cleared if it names it, once its expiry is more than an hour past. The expiry is `expiresAt` in `status.json` (from the relay's welcome, pushed forward on activity while an MCP server runs); without one it is `room.json`'s mtime plus the 24 h max age. `export` keeps working until the sweep. A room kept alive only by other members while no local MCP server ran can be swept early; `join` again with the code. It is a session cache, not a log; durable copies exist only when the user runs `export`.
 
 Local state contract (milestone 1):
 

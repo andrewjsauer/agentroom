@@ -7,6 +7,7 @@ import {
   fstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   renameSync,
@@ -450,4 +451,46 @@ export function writeRoomSettings(
 
 export function deleteRoomDir(home: string, roomId: string): void {
   rmSync(roomDir(home, roomId), { recursive: true, force: true });
+}
+
+/** A room dir is swept this long after its expiry, so `export` still works right after it. */
+export const SWEEP_GRACE_MS = 3_600_000;
+/** Without a known expiry: the relay's 24 h max age, counted from when room.json was written. */
+const MAX_ROOM_AGE_MS = 24 * 3_600_000;
+
+/**
+ * Delete local room dirs (secret, decrypted queue) whose room expired over an hour ago, and clear
+ * `current` if it named one. The expiry is status.json's `expiresAt` (from the relay's welcome,
+ * pushed forward on activity by the MCP server); with none, room.json's mtime plus the 24 h max
+ * age. Undatable dirs are left alone. Returns the swept room ids; never throws.
+ */
+export function sweepExpiredRooms(
+  home: string,
+  now: number = Date.now(),
+): string[] {
+  const swept: string[] = [];
+  let ids: string[];
+  try {
+    ids = readdirSync(join(home, "rooms"));
+  } catch {
+    return swept;
+  }
+  for (const id of ids) {
+    if (!RoomId.safeParse(id).success) continue;
+    try {
+      let expiresAt = readStatus(home, id)?.expiresAt ?? null;
+      if (expiresAt === null) {
+        expiresAt =
+          statSync(join(roomDir(home, id), "room.json")).mtimeMs +
+          MAX_ROOM_AGE_MS;
+      }
+      if (now <= expiresAt + SWEEP_GRACE_MS) continue;
+      deleteRoomDir(home, id);
+      clearCurrentIf(home, id);
+      swept.push(id);
+    } catch {
+      // No status.json and no room.json: nothing to date it by.
+    }
+  }
+  return swept;
 }
