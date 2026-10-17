@@ -29,25 +29,42 @@ function keyParts(key: string): string[] {
   return parts;
 }
 
-/** The multi-line string delimiter still open at the end of `line`, given the one open at its start. */
-function multilineState(
-  line: string,
-  open: string | undefined,
-): string | undefined {
-  let state = open;
+/** What is still open at a line boundary: a multi-line string, and how deep in `[`/`{` values. */
+interface ScanState {
+  str: '"""' | "'''" | undefined;
+  depth: number;
+}
+
+const CLOSED: ScanState = { str: undefined, depth: 0 };
+
+const isOpen = (s: ScanState) => s.str !== undefined || s.depth !== 0;
+
+/**
+ * The state at the end of a value line, given the state at its start. Tracks multi-line strings
+ * (with `\` escapes in `"""` strings and up to two extra quotes before the closing delimiter)
+ * and array or inline-table nesting, so a header-like line inside either is not a header.
+ */
+function scanLine(line: string, start: ScanState): ScanState {
+  let { str, depth } = start;
   let i = 0;
   while (i < line.length) {
-    if (state) {
-      const end = line.indexOf(state, i);
-      if (end < 0) return state;
-      i = end + 3;
-      state = undefined;
+    const ch = line[i];
+    if (str) {
+      if (str === '"""' && ch === "\\") {
+        i += 2;
+      } else if (line.startsWith(str, i)) {
+        let run = 3;
+        while (run < 5 && line[i + run] === str[0]) run++;
+        i += run;
+        str = undefined;
+      } else {
+        i++;
+      }
       continue;
     }
-    const ch = line[i];
-    if (ch === "#") return undefined;
+    if (ch === "#") break;
     if (line.startsWith('"""', i) || line.startsWith("'''", i)) {
-      state = line.slice(i, i + 3);
+      str = line.slice(i, i + 3) as ScanState["str"];
       i += 3;
     } else if (ch === '"') {
       // A one-line basic string: skip to its closing quote, past escapes.
@@ -58,10 +75,12 @@ function multilineState(
       const end = line.indexOf("'", i + 1);
       i = end < 0 ? line.length : end + 1;
     } else {
+      if (ch === "[" || ch === "{") depth++;
+      else if (ch === "]" || ch === "}") depth--;
       i++;
     }
   }
-  return state;
+  return { str, depth };
 }
 
 /**
@@ -73,6 +92,11 @@ export function removeAgentroomTable(
   file: string,
   installing = false,
 ): string {
+  const unbalanced = (): never => {
+    throw new CliError(
+      `${file} has an unterminated string, array or inline table, or an unmatched bracket, so agentroom cannot rewrite it safely; fix it, then rerun`,
+    );
+  };
   const refuse = (): never => {
     throw new CliError(
       `${file} defines MCP servers in a form agentroom cannot rewrite safely (inline table, dotted key or array of tables); edit it by hand, then rerun`,
@@ -80,7 +104,8 @@ export function removeAgentroomTable(
   };
   const lines = text.split(/(?<=\n)/);
   const kept: string[] = [];
-  let open: string | undefined;
+  let state = CLOSED;
+  let broken = false;
   let table: string[] = [];
   let dropping = false;
   let removed = false;
@@ -88,9 +113,13 @@ export function removeAgentroomTable(
   let trailing: string[] = [];
   const blank = (l: string) => /^\s*$/.test(l);
   for (const line of lines) {
-    const startsOpen = open;
-    open = multilineState(line, open);
+    const startsOpen = isOpen(state);
     const header = startsOpen ? null : HEADER.exec(line.replace(/\r?\n$/, ""));
+    if (!header) state = scanLine(line, state);
+    if (state.depth < 0) {
+      broken = true;
+      state = { ...state, depth: 0 };
+    }
     if (header) {
       table = keyParts(header[2] ?? "");
       const ours = table[0] === "mcp_servers" && table[1] === "agentroom";
@@ -140,6 +169,8 @@ export function removeAgentroomTable(
           : [];
     }
   }
+  // An unterminated string or array would swallow an appended table, and drop lines on removal.
+  if ((broken || isOpen(state)) && (removed || installing)) unbalanced();
   if (!removed) return text;
   const rest = kept.join("").replace(/\n+$/, "\n");
   return rest.trim() === "" ? "" : rest;
