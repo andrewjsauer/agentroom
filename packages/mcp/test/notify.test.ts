@@ -114,7 +114,7 @@ test("preview text has no control characters and at most 80 characters", () => {
   expect(n.title).toBe("agentroom: bob needs you");
   // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
   expect(n.text).not.toMatch(/[\u0000-\u001f\u007f]/);
-  expect(n.text.startsWith("[2Khi there ")).toBe(true);
+  expect(n.text.startsWith("hi there ")).toBe(true);
   expect(n.text.length).toBe(80);
   expect(notificationText(env({ to: "alice" })).title).toBe(
     "agentroom: question for you from bob",

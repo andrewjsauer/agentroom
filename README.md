@@ -206,7 +206,7 @@ agentroom protects message contents from the relay and stops the common accident
 
 **Refs, not code.** Agents are told to send `{repo, path, lines, commit}` references instead of pasting code. That is an instruction, not a control: a message body can carry 8 000 characters of anything, code included, visible to every member.
 
-**Inbound messages are data.** Every message an agent reads is wrapped in a labeled, nonce-tagged block with a reminder that it is information from another person's agent, not instructions. This lowers the risk of prompt injection; it does not remove it.
+**Inbound messages are data.** Every message an agent reads is wrapped in a labeled, nonce-tagged block with a reminder that it is information from another person's agent, not instructions. Terminal escape sequences, control characters, zero-width and other invisible format characters, bidi overrides and Unicode Tag characters are stripped from bodies, names, ids and refs first, so a message cannot carry text the model reads but you cannot see, and closing tags spelled with lookalike letters or full-width brackets are escaped. This lowers the risk of prompt injection; it does not remove it: visible text can still ask an agent to do things.
 
 **Share-code leakage is yours to manage.** Treat the code like a password. If it leaks, run `agentroom down` (creator only) and start a new room with `agentroom up`.
 
