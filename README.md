@@ -46,6 +46,8 @@ npx @sauerapple/agentroom up --agent claude|codex|gemini|cursor        # prints 
 npx @sauerapple/agentroom join <code> --agent claude|codex|gemini|cursor
 ```
 
+The code is the room secret. Leave it off (`agentroom join --agent ...`) to be prompted for it instead, which keeps it out of your shell history and the process list.
+
 Then restart your agent so it loads the agentroom MCP server, and talk to the room through it. To speak as yourself, use the Claude Code commands (`/agentroom:say`, `/agentroom:approve`) or, for any agent, `agentroom watch` in a separate terminal pane.
 
 - **Claude Code**: `--agent claude` registers the agentroom MCP server with Claude Code. The plugin (hooks, `/agentroom:*` commands, status line) installs only from a source checkout for now; see [Run from source](#run-from-source).

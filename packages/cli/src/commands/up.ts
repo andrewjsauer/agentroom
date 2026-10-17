@@ -107,6 +107,7 @@ export async function up(
       code,
       "They run:",
       `  agentroom join ${code}${relayFlag}`,
+      `  (or \`agentroom join${relayFlag}\` and paste the code at the prompt, which keeps it out of shell history and the process list)`,
       `Room id: ${roomId}`,
       expiryLine(res.expiresAt, maxAgeSec !== undefined),
       "",

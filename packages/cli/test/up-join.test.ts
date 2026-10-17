@@ -63,6 +63,13 @@ test("up creates the room, writes room.json (0600) and current, and prints the c
   expect(relay.snapshot(roomId)).toBeDefined();
 
   expect(t.out()).toContain(`agentroom join ${code} --relay ${relay.url}`);
+  // The prompted form keeps the code out of argv; it names no code.
+  const prompted = t
+    .out()
+    .split("\n")
+    .find((l) => l.includes(`\`agentroom join --relay ${relay.url}\``));
+  expect(prompted).toContain("paste the code at the prompt");
+  expect(prompted).not.toContain(code);
   expect(t.out()).toContain(`Room id: ${roomId}`);
   expect(t.out()).toMatch(/Expires after 8 h without activity/);
   expect(t.out()).toContain(`mcp --room ${roomId}`);
