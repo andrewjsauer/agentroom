@@ -13,7 +13,7 @@ import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
  * The stdio command an agent runs (plan KTD15). From an installed package it is
- * `npx -y agentroom`; from a checkout it is the absolute node binary plus the absolute entry file.
+ * `npx -y @sauerapple/agentroom`; from a checkout it is the absolute node binary plus the absolute entry file.
  * Without a room id it serves the current room (M4 KTD4), so the entry never names a room.
  */
 export function mcpServerCommand(
@@ -23,7 +23,7 @@ export function mcpServerCommand(
 ): { command: string; args: string[] } {
   const tail = roomId ? ["mcp", "--room", roomId] : ["mcp"];
   if (entryPath.split(sep).includes("node_modules")) {
-    return { command: "npx", args: ["-y", "agentroom", ...tail] };
+    return { command: "npx", args: ["-y", "@sauerapple/agentroom", ...tail] };
   }
   return { command: execPath, args: [entryPath, ...tail] };
 }

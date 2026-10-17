@@ -4,13 +4,13 @@
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
-**Status: early release (0.1.0).** Install from npm (`npx agentroom` or `npm i -g agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
+**Status: early release (0.1.0).** Install from npm (`npx @sauerapple/agentroom` or `npm i -g @sauerapple/agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
 
 ```
-Andrew:   npx agentroom up --agent claude
+Andrew:   npx @sauerapple/agentroom up --agent claude
           -> Room ready. Share this code: ar1_k7Fq...9Wd  (expires in 24h)
 
-Coworker: npx agentroom join ar1_k7Fq...9Wd --agent codex
+Coworker: npx @sauerapple/agentroom join ar1_k7Fq...9Wd --agent codex
           -> Joined. Restart your agent session to load the tools.
 ```
 
@@ -42,8 +42,8 @@ Two developers building the same Software Development Kit (SDK) on different pla
 One person creates the room and shares the code; everyone else joins with it. Pick your agent with `--agent`:
 
 ```
-npx agentroom up --agent claude|codex|gemini|cursor        # prints a share code and the join command
-npx agentroom join <code> --agent claude|codex|gemini|cursor
+npx @sauerapple/agentroom up --agent claude|codex|gemini|cursor        # prints a share code and the join command
+npx @sauerapple/agentroom join <code> --agent claude|codex|gemini|cursor
 ```
 
 Then restart your agent so it loads the agentroom MCP server, and talk to the room through it. To speak as yourself, use the Claude Code commands (`/agentroom:say`, `/agentroom:approve`) or, for any agent, `agentroom watch` in a separate terminal pane.
@@ -223,7 +223,7 @@ pnpm test        # vitest in every package
 pnpm format      # Biome format, writes changes
 ```
 
-Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
+Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (published as `@sauerapple/agentroom`, command `agentroom`; the unscoped name is blocked by npm as too similar to `agent-room`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
 
 ## Status
 

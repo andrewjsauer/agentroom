@@ -5,9 +5,9 @@ import {
 } from "../src/adapters/toml.js";
 
 const F = "/tmp/config.toml";
-const entry = { command: "npx", args: ["-y", "agentroom", "mcp"] };
+const entry = { command: "npx", args: ["-y", "@sauerapple/agentroom", "mcp"] };
 const BLOCK =
-  '[mcp_servers.agentroom]\ncommand = "npx"\nargs = ["-y","agentroom","mcp"]\n';
+  '[mcp_servers.agentroom]\ncommand = "npx"\nargs = ["-y","@sauerapple/agentroom","mcp"]\n';
 
 const AE3 = `# my codex config
 model = "o5"

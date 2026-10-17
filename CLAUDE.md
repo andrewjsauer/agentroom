@@ -15,7 +15,7 @@ You are building **agentroom**, an open-source tool that lets developers' AI cod
 - pnpm workspaces monorepo (see layout in `docs/ARCHITECTURE.md`).
 - `zod` (v4) for all schemas; `@modelcontextprotocol/server` and `@modelcontextprotocol/client` (MCP TypeScript SDK v2; `@modelcontextprotocol/sdk` is the v1 line, chosen against because v2 is the stable line per the SDK README on 2026-10-11) for MCP; `ws` for WebSockets in Node; `libsodium-wrappers` for AEAD and signatures, `node:crypto` for HKDF. Do not hand-roll crypto primitives.
 - `vitest` for tests. Every package has unit tests; `protocol` and crypto code need thorough tests including tamper and wrong-key cases.
-- `tsup` for builds. The CLI is published so `npx agentroom` works with no install.
+- `tsup` for builds. The CLI is published so `npx @sauerapple/agentroom` works with no install.
 - Biome or ESLint plus Prettier; pick one at setup and stick with it.
 - No telemetry. No network calls other than to the configured relay.
 
