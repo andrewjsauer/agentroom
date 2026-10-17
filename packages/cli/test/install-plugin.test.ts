@@ -2,8 +2,11 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -248,7 +251,7 @@ test("a failing plugin install exits 1 with its stderr and writes no status line
 test("an npm entry keeps the M1 mcp add path and says the plugin comes with the npm release", async () => {
   const s = setup(
     {},
-    "/Users/x/.npm/_npx/abc/node_modules/agentroom/dist/bin.js",
+    "/usr/local/lib/node_modules/@sauerapple/agentroom/dist/bin.js",
   );
   const t = s.ctx();
   expect(await main(["install", "claude"], t.ctx)).toBe(0);
@@ -293,4 +296,89 @@ test("the ask rules keep the user's own, are not duplicated, and uninstall remov
     defaultMode: "auto",
     ask: ["Bash(git push:*)"],
   });
+});
+
+test("a symlinked settings.json is written through the link, keeps its mode, and the config dir is not chmodded", async () => {
+  const s = setup();
+  const dotfiles = dir();
+  const real = join(dotfiles, "claude-settings.json");
+  writeFileSync(real, JSON.stringify({ theme: "dark" }));
+  chmodSync(real, 0o644);
+  const configDir = join(s.settingsFile, "..");
+  chmodSync(configDir, 0o755);
+  symlinkSync(real, s.settingsFile);
+
+  expect(await main(["install", "claude"], s.ctx().ctx)).toBe(0);
+  expect(lstatSync(s.settingsFile).isSymbolicLink()).toBe(true);
+  const written = JSON.parse(readFileSync(real, "utf8"));
+  expect(written.theme).toBe("dark");
+  expect(written.statusLine.command).toContain(" statusline");
+  expect(written.permissions.ask).toEqual(ASK_TOOLS);
+  expect(statSync(real).mode & 0o777).toBe(0o644);
+  expect(statSync(configDir).mode & 0o777).toBe(0o755);
+
+  expect(await main(["uninstall", "claude"], s.ctx().ctx)).toBe(0);
+  expect(lstatSync(s.settingsFile).isSymbolicLink()).toBe(true);
+  expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ theme: "dark" });
+  expect(statSync(real).mode & 0o777).toBe(0o644);
+  expect(statSync(configDir).mode & 0o777).toBe(0o755);
+});
+
+test("a missing Claude config dir is created 0700 with a 0600 settings.json", async () => {
+  const s = setup();
+  const configDir = join(dir(), "fresh-claude");
+  expect(
+    await main(
+      ["install", "claude"],
+      s.ctx({ CLAUDE_CONFIG_DIR: configDir }).ctx,
+    ),
+  ).toBe(0);
+  expect(statSync(configDir).mode & 0o777).toBe(0o700);
+  expect(statSync(join(configDir, "settings.json")).mode & 0o777).toBe(0o600);
+});
+
+test("uninstall claude removes the user-scope MCP server before the plugin", async () => {
+  const s = setup();
+  const t = s.ctx();
+  expect(await main(["uninstall", "claude"], t.ctx)).toBe(0);
+  expect(calls(s.fake.log)).toEqual([
+    ["mcp", "remove", "--scope", "user", "agentroom"],
+    ["plugin", "uninstall", "agentroom@agentroom", "--scope", "user"],
+  ]);
+  expect(t.out()).toContain("Removed the user-scope agentroom MCP server.");
+});
+
+test("uninstall claude drops only mcpServers.agentroom from ./.mcp.json, keeping the file and its mode", async () => {
+  const s = setup();
+  const t = s.ctx({ PATH: dir() });
+  expect(await main(["install", "claude"], t.ctx)).toBe(0);
+  const file = join(t.ctx.cwd, ".mcp.json");
+  const written = JSON.parse(readFileSync(file, "utf8"));
+  written.mcpServers.other = { type: "stdio", command: "other" };
+  writeFileSync(file, JSON.stringify(written));
+  chmodSync(file, 0o640);
+  const un = makeCtx(s.home, { cwd: t.ctx.cwd, env: { PATH: dir() } });
+  expect(await main(["uninstall", "claude"], un.ctx)).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    mcpServers: { other: { type: "stdio", command: "other" } },
+  });
+  expect(statSync(file).mode & 0o777).toBe(0o640);
+  expect(un.out()).toContain(`Removed the agentroom server from ${file}`);
+
+  // Nothing of ours left: the file is untouched and nothing is reported.
+  const again = makeCtx(s.home, { cwd: t.ctx.cwd, env: { PATH: dir() } });
+  const before = readFileSync(file, "utf8");
+  expect(await main(["uninstall", "claude"], again.ctx)).toBe(0);
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(again.out()).not.toContain(".mcp.json");
+});
+
+test("uninstall claude leaves an invalid .mcp.json alone and still finishes", async () => {
+  const s = setup();
+  const cwd = dir();
+  writeFileSync(join(cwd, ".mcp.json"), "{oops");
+  const t = makeCtx(s.home, { cwd, env: { PATH: dir() } });
+  expect(await main(["uninstall", "claude"], t.ctx)).toBe(0);
+  expect(readFileSync(join(cwd, ".mcp.json"), "utf8")).toBe("{oops");
+  expect(t.out()).toContain("not a JSON object; left it as is");
 });

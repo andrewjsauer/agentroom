@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,10 +87,20 @@ const submit = () =>
     prompt: "What did bob say?",
   });
 
+/** A transcript file where Claude Code keeps them, which the expansion hook's origin check needs. */
+function transcriptFor(home: string): string {
+  const dir = join(home, "claude-config", "projects", "-project");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "session.jsonl");
+  writeFileSync(file, "");
+  return file;
+}
+
 async function expand(command: string, args: string) {
   const r = await runLauncher(["hook", "prompt-expansion"], {
     ...fixture("user-prompt-expansion.json"),
     cwd: project,
+    transcript_path: transcriptFor(homeA),
     command_name: `agentroom:${command}`,
     command_args: args,
     prompt: `/agentroom:${command} ${args}`,
@@ -165,6 +181,9 @@ test("/agentroom:send releases alice's agent draft and a human approve", async (
     draft: true,
   });
   const hash = d.structured.hash as string;
+  // The bare preview prints the stored draft and its hash; a release requires it first.
+  const preview = await expand("send", "");
+  expect(preview.reason).toContain(`Type /agentroom:send ${hash} to send it.`);
   const r = await expand("send", hash);
   expect(r.reason).toMatch(new RegExp(`^Sent draft ${hash} to room`));
   const envs = await relayEnvelopes();

@@ -6,6 +6,8 @@ import {
   readStatus,
 } from "@agentroom/mcp";
 import { type CliContext, forgetGoneRoom, resolveRoomId } from "../context.js";
+import { checkRelayUrl } from "../relay-url.js";
+import { stripTerminal } from "../safe-text.js";
 
 export async function status(
   values: Record<string, string | undefined>,
@@ -29,7 +31,7 @@ export async function status(
   }
 
   const res = await oneShot({
-    url: room.relay,
+    url: checkRelayUrl(room.relay, "room.json"),
     hello: { t: "hello", room: roomId, proto: 1 },
   });
   if (res.t === "error") {
@@ -37,7 +39,9 @@ export async function status(
       ctx.stdout.write(`${forgetGoneRoom(home, roomId, room.relay)}\n`);
       return 1;
     }
-    ctx.stderr.write(`relay error ${res.code}: ${res.message}\n`);
+    ctx.stderr.write(
+      `relay error ${res.code}: ${stripTerminal(res.message)}\n`,
+    );
     return 1;
   }
 

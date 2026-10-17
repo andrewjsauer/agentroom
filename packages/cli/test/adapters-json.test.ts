@@ -3,7 +3,10 @@ import { removeJsonEntry, setJsonEntry } from "../src/adapters/json-config.js";
 import { removeBlock, SNIPPET, upsertBlock } from "../src/adapters/snippet.js";
 
 const F = "/tmp/settings.json";
-const entry = { command: "npx", args: ["-y", "@sauerapple/agentroom", "mcp"] };
+const entry = {
+  command: "/usr/bin/node",
+  args: ["/opt/agentroom/dist/bin.js", "mcp"],
+};
 
 test("sets mcpServers.agentroom, keeping other servers and keys; idempotent", () => {
   const text = `${JSON.stringify({ theme: "dark", mcpServers: { other: { command: "o" } } }, null, 2)}\n`;

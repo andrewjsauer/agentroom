@@ -19,12 +19,18 @@ afterEach(async () => {
 });
 
 const pendingPath = () => join(roomDir(r.home, r.roomId), "pending.json");
-const send = (args: string) =>
+const sendOnly = (args: string, fields: Record<string, unknown> = {}) =>
   r.expand({
     command_name: "agentroom:send",
     command_args: args,
     prompt: `/agentroom:send ${args}`,
+    ...fields,
   });
+/** What the user does: a bare preview, then the hash (the preview is required before a release). */
+const send = async (args: string) => {
+  if (args.trim() !== "") await sendOnly("");
+  return sendOnly(args);
+};
 
 async function setup(opts: Parameters<typeof hookRoom>[0] = {}) {
   r = await hookRoom(opts);
@@ -66,7 +72,7 @@ test("AE2: a replaced draft refuses the old hash; the new hash posts the draft t
   const before = r.head();
   const stale = await send(h1);
   expect(reasonOf(stale.out)).toBe(
-    `Not sent: the pending draft changed after it was shown (now ${d2.hash}). Ask Claude to show it again, or type /agentroom:send to preview it.`,
+    `Not sent: the pending draft changed after it was shown (now ${d2.hash}). Type /agentroom:send to preview it.`,
   );
   expect(r.head()).toBe(before);
 
@@ -180,6 +186,32 @@ test("send with no argument previews from disk: stripped, newlines kept, truncat
   expect(lines[2]?.startsWith("next z")).toBe(true);
   expect(reason).toContain("[truncated]");
   expect(lines.at(-1)).toBe(`Type /agentroom:send ${hash} to send it.`);
+});
+
+test("a release needs a bare preview of that same draft in the same session", async () => {
+  const { session } = await setup();
+  const NOT_PREVIEWED =
+    /^Not sent: review the draft first\. Type \/agentroom:send with no hash/;
+  const d1 = session.draft({ kind: "fyi", body: "first" });
+  const before = r.head();
+  // The hash the model showed, typed without a preview: refused, draft kept.
+  expect(reasonOf((await sendOnly(d1.hash)).out)).toMatch(NOT_PREVIEWED);
+  // Previewed in another session: refused.
+  await sendOnly("", { session_id: "other-session" });
+  expect(reasonOf((await sendOnly(d1.hash)).out)).toMatch(NOT_PREVIEWED);
+  // Previewed, then replaced by a new draft whose hash the model shows: refused until previewed.
+  await sendOnly("");
+  const d2 = session.draft({ kind: "fyi", body: "second" });
+  expect(reasonOf((await sendOnly(d2.hash)).out)).toMatch(NOT_PREVIEWED);
+  expect(r.head()).toBe(before);
+  expect(existsSync(pendingPath())).toBe(true);
+  // Preview prints the hash itself; typing it then sends.
+  const preview = reasonOf((await sendOnly("")).out);
+  expect(preview).toContain(`Type /agentroom:send ${d2.hash} to send it.`);
+  expect(reasonOf((await sendOnly(d2.hash)).out)).toMatch(/^Sent draft/);
+  expect(existsSync(join(roomDir(r.home, r.roomId), "previewed.json"))).toBe(
+    false,
+  );
 });
 
 test("no pending draft, and a malformed hash", async () => {

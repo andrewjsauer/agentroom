@@ -1,4 +1,13 @@
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { setCurrent, writeRoomFile } from "@agentroom/mcp";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
@@ -60,27 +69,127 @@ function homeWithRoom(): string {
   return home;
 }
 
-test("mcpServerCommand uses npx when installed and the absolute checkout path otherwise", () => {
-  expect(
-    mcpServerCommand(
-      "/x/node_modules/@sauerapple/agentroom/dist/bin.js",
-      ROOM,
-      "/n",
-    ),
-  ).toEqual({
-    command: "npx",
-    args: ["-y", "@sauerapple/agentroom", "mcp", "--room", ROOM],
+test("mcpServerCommand is always node plus an absolute entry, never npx", () => {
+  for (const entry of [
+    "/x/node_modules/@sauerapple/agentroom/dist/bin.js",
+    "/src/agentroom/packages/cli/dist/bin.js",
+  ]) {
+    expect(mcpServerCommand(entry, ROOM, "/usr/bin/node")).toEqual({
+      command: "/usr/bin/node",
+      args: [entry, "mcp", "--room", ROOM],
+    });
+  }
+  expect(mcpServerCommand("/a/bin.js", undefined, "/n").args).toEqual([
+    "/a/bin.js",
+    "mcp",
+  ]);
+});
+
+/** A fake npx cache: `<root>/_npx/abc/node_modules/{@sauerapple/agentroom,ws}` plus a .bin link. */
+function fakeNpx(version = "9.8.7"): { entry: string; modules: string } {
+  const modules = join(dir(), "_npx", "abc", "node_modules");
+  const pkg = join(modules, "@sauerapple", "agentroom");
+  mkdirSync(join(pkg, "dist"), { recursive: true });
+  writeFileSync(join(pkg, "package.json"), JSON.stringify({ version }));
+  writeFileSync(join(pkg, "dist", "bin.js"), "// bin\n");
+  mkdirSync(join(modules, "ws"));
+  writeFileSync(join(modules, "ws", "index.js"), "// ws\n");
+  mkdirSync(join(modules, ".bin"));
+  symlinkSync(
+    "../@sauerapple/agentroom/dist/bin.js",
+    join(modules, ".bin", "agentroom"),
+  );
+  return { entry: join(pkg, "dist", "bin.js"), modules };
+}
+
+test("an npx cache entry is copied with its dependencies to AGENTROOM_HOME/bin/<version> and registered by absolute path", async () => {
+  const home = homeWithRoom();
+  const fake = fakeClaude();
+  const npx = fakeNpx();
+  const t = makeCtx(home, {
+    env: { PATH: fake.path, CLAUDE_FAKE_LOG: fake.log },
+    entryPath: npx.entry,
   });
+  expect(await main(["install", "claude"], t.ctx)).toBe(0);
+  const dest = join(home, "bin", "9.8.7");
+  const copied = join(
+    dest,
+    "node_modules",
+    "@sauerapple",
+    "agentroom",
+    "dist",
+    "bin.js",
+  );
+  expect(calls(fake.log)[1]?.slice(7)).toEqual([
+    "--",
+    process.execPath,
+    copied,
+    "mcp",
+    "--room",
+    ROOM,
+  ]);
+  expect(calls(fake.log).flat()).not.toContain("npx");
   expect(
-    mcpServerCommand(
-      "/src/agentroom/packages/cli/dist/bin.js",
-      ROOM,
-      "/usr/bin/node",
-    ),
-  ).toEqual({
-    command: "/usr/bin/node",
-    args: ["/src/agentroom/packages/cli/dist/bin.js", "mcp", "--room", ROOM],
+    readFileSync(join(dest, "node_modules", "ws", "index.js"), "utf8"),
+  ).toBe("// ws\n");
+  expect(readlinkSync(join(dest, "node_modules", ".bin", "agentroom"))).toBe(
+    "../@sauerapple/agentroom/dist/bin.js",
+  );
+  expect(statSync(join(home, "bin")).mode & 0o777).toBe(0o700);
+  expect(t.out()).toContain(`runs a copy in ${dest}`);
+
+  // Idempotent: a second install reuses the copy instead of copying again.
+  writeFileSync(npx.entry, "// changed\n");
+  const again = makeCtx(home, {
+    env: { PATH: fake.path, CLAUDE_FAKE_LOG: fake.log },
+    entryPath: npx.entry,
   });
+  expect(await main(["install", "claude"], again.ctx)).toBe(0);
+  expect(readFileSync(copied, "utf8")).toBe("// bin\n");
+  expect(calls(fake.log)[3]?.slice(8, 9)).toEqual([process.execPath]);
+});
+
+test("an npx entry for codex writes the copied path into config.toml, never npx", async () => {
+  const home = dir();
+  const npx = fakeNpx("1.2.3");
+  const t = makeCtx(home, { entryPath: npx.entry });
+  expect(await main(["install", "codex"], t.ctx)).toBe(0);
+  const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
+  expect(toml).not.toContain("npx");
+  expect(toml).toContain(
+    JSON.stringify(
+      join(
+        home,
+        "bin",
+        "1.2.3",
+        "node_modules",
+        "@sauerapple",
+        "agentroom",
+        "dist",
+        "bin.js",
+      ),
+    ),
+  );
+});
+
+test("a global or local install (node_modules outside the npx cache) is registered in place", async () => {
+  const home = homeWithRoom();
+  const fake = fakeClaude();
+  const entry = "/usr/local/lib/node_modules/@sauerapple/agentroom/dist/bin.js";
+  const t = makeCtx(home, {
+    env: { PATH: fake.path, CLAUDE_FAKE_LOG: fake.log },
+    entryPath: entry,
+  });
+  expect(await main(["install", "claude"], t.ctx)).toBe(0);
+  expect(calls(fake.log)[1]?.slice(7)).toEqual([
+    "--",
+    process.execPath,
+    entry,
+    "mcp",
+    "--room",
+    ROOM,
+  ]);
+  expect(existsSync(join(home, "bin"))).toBe(false);
 });
 
 test("install claude runs remove then add with an exact argument array (checkout entry)", async () => {
@@ -111,26 +220,6 @@ test("install claude runs remove then add with an exact argument array (checkout
     ],
   ]);
   expect(t.out()).toContain("Restart Claude Code");
-});
-
-test("an entry inside node_modules registers npx -y @sauerapple/agentroom", async () => {
-  const home = homeWithRoom();
-  const fake = fakeClaude();
-  const t = makeCtx(home, {
-    env: { PATH: fake.path, CLAUDE_FAKE_LOG: fake.log },
-    entryPath:
-      "/Users/x/.npm/_npx/abc/node_modules/@sauerapple/agentroom/dist/bin.js",
-  });
-  expect(await main(["install", "claude"], t.ctx)).toBe(0);
-  expect(calls(fake.log)[1]?.slice(7)).toEqual([
-    "--",
-    "npx",
-    "-y",
-    "@sauerapple/agentroom",
-    "mcp",
-    "--room",
-    ROOM,
-  ]);
 });
 
 test("a failing remove still proceeds to add; a failing add exits non-zero with its stderr", async () => {

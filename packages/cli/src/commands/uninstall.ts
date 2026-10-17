@@ -1,11 +1,47 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { findOnPath } from "@agentroom/mcp";
 import { isAdapterAgent, uninstallAdapter } from "../adapters/index.js";
-import { uninstallAskRules, uninstallStatusLine } from "../claude-settings.js";
+import {
+  isObject,
+  uninstallAskRules,
+  uninstallStatusLine,
+} from "../claude-settings.js";
 import { type CliContext, CliError } from "../context.js";
+import { writeConfigFile } from "../write-file.js";
+
+/** Drop `mcpServers.agentroom` from `<cwd>/.mcp.json` (the no-`claude` install), keeping the rest. */
+function removeProjectMcp(ctx: CliContext): void {
+  const file = join(ctx.cwd, ".mcp.json");
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return;
+  }
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    config = undefined;
+  }
+  if (!isObject(config)) {
+    ctx.stdout.write(
+      `${file} is not a JSON object; left it as is. Remove any agentroom entry by hand.\n`,
+    );
+    return;
+  }
+  const servers = config.mcpServers;
+  if (!isObject(servers) || !("agentroom" in servers)) return;
+  delete servers.agentroom;
+  writeConfigFile(file, `${JSON.stringify(config, null, 2)}\n`);
+  ctx.stdout.write(`Removed the agentroom server from ${file}.\n`);
+}
 
 /**
- * `agentroom uninstall claude`: restore the status line, drop the ask rules, then remove the plugin (KTD18).
+ * `agentroom uninstall claude`: restore the status line, drop the ask rules and the project
+ * `.mcp.json` entry, then remove the user-scope MCP registration and the plugin (KTD18).
  * `uninstall codex|gemini|cursor [--project]`: remove the MCP entry and the snippet block.
  */
 export function uninstall(
@@ -25,12 +61,22 @@ export function uninstall(
   }
   ctx.stdout.write(`${uninstallStatusLine(ctx)}\n`);
   uninstallAskRules(ctx);
+  removeProjectMcp(ctx);
   const claude = findOnPath(ctx.env.PATH, "claude");
   if (claude === undefined) {
     ctx.stdout.write(
-      "`claude` is not on PATH; remove the agentroom plugin from Claude Code with /plugin if you installed it.\n",
+      "`claude` is not on PATH; remove the agentroom plugin and any user-scope agentroom MCP server from Claude Code with /plugin and /mcp if you installed them.\n",
     );
     return 0;
+  }
+  // The npm path registers a user-scope server; a missing entry makes this fail, which is fine.
+  const mcp = spawnSync(
+    claude,
+    ["mcp", "remove", "--scope", "user", "agentroom"],
+    { env: ctx.env, stdio: "ignore" },
+  );
+  if (mcp.status === 0) {
+    ctx.stdout.write("Removed the user-scope agentroom MCP server.\n");
   }
   const r = spawnSync(
     claude,

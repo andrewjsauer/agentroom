@@ -1,3 +1,5 @@
+import { lstatSync, realpathSync, statSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { agentroomHome } from "@agentroom/mcp";
 import {
   chainState,
@@ -14,9 +16,13 @@ import { connectForPost, type PostSession } from "../room-post.js";
 import { id8, safeLine, stripTerminal } from "../safe-text.js";
 import { previewDraft, releaseDraft } from "./release.js";
 import { readHookInput } from "./stdin.js";
+import { isInside } from "./submit.js";
 
 const ExpansionInput = z.looseObject({
   hook_event_name: z.string(),
+  session_id: z.string(),
+  transcript_path: z.string(),
+  cwd: z.string(),
   expansion_type: z.string(),
   command_name: z.string(),
   command_args: z.string().default(""),
@@ -27,6 +33,51 @@ const COMMANDS = ["say", "approve", "send", "sync-mode"] as const;
 type Command = (typeof COMMANDS)[number];
 
 const GUARD_TEXT = "agentroom hook: not running as a Claude Code plugin hook";
+
+const isDir = (p: string) => {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Cheap checks that a real Claude Code hook call passes and a hand-made one usually does not:
+ * a non-empty session id, an existing cwd, and a transcript that is an existing regular file
+ * under `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/`. An agent with a shell can still satisfy
+ * them (see the threat model); the chain limit bounds what a forged human message can unlock.
+ * Returns why the input was refused, or undefined.
+ */
+export function originProblem(
+  input: { session_id: string; transcript_path: string; cwd: string },
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (input.session_id.trim() === "") return "session_id is empty";
+  if (!isAbsolute(input.cwd) || !isDir(input.cwd)) {
+    return "cwd is not an existing directory";
+  }
+  const config =
+    env.CLAUDE_CONFIG_DIR || (env.HOME ? join(env.HOME, ".claude") : undefined);
+  if (config === undefined) return "neither CLAUDE_CONFIG_DIR nor HOME is set";
+  let transcript: string;
+  let projects: string;
+  try {
+    if (!isAbsolute(input.transcript_path)) throw new Error("relative");
+    transcript = realpathSync(input.transcript_path);
+    projects = realpathSync(join(config, "projects"));
+  } catch {
+    return "transcript_path is not an existing file under the Claude projects directory";
+  }
+  if (
+    transcript === projects ||
+    !isInside(projects, transcript) ||
+    !lstatSync(transcript).isFile()
+  ) {
+    return "transcript_path is not an existing file under the Claude projects directory";
+  }
+  return undefined;
+}
 
 /**
  * Which human-only command this is, if any (KTD8). `agentroom:<name>` always; a bare name only
@@ -164,6 +215,7 @@ async function run(
   command: Command,
   args: string,
   ctx: CliContext,
+  session: string,
 ): Promise<string> {
   switch (command) {
     case "say":
@@ -172,8 +224,8 @@ async function run(
       return approve(args, ctx);
     case "send":
       return args.trim() === ""
-        ? previewDraft(ctx)
-        : releaseDraft(args.trim(), ctx);
+        ? previewDraft(ctx, session)
+        : releaseDraft(args.trim(), ctx, session);
     case "sync-mode": {
       const { roomId } = loadRoom(undefined, ctx);
       const mode = args.trim();
@@ -212,11 +264,16 @@ export async function promptExpansion(ctx: CliContext): Promise<number> {
     ctx.stderr.write(`${GUARD_TEXT}\n`);
     return 1;
   }
+  const problem = originProblem(input, ctx.env);
+  if (problem !== undefined) {
+    ctx.stderr.write(`${GUARD_TEXT}: ${problem}\n`);
+    return 1;
+  }
   const command = recognize(input.command_name, input.prompt);
   if (command === undefined) return 0;
   let reason: string;
   try {
-    reason = await run(command, input.command_args, ctx);
+    reason = await run(command, input.command_args, ctx, input.session_id);
   } catch (err) {
     reason = `Not sent: ${stripTerminal(err instanceof Error ? err.message : String(err))}`;
   }

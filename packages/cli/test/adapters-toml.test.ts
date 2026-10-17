@@ -5,9 +5,12 @@ import {
 } from "../src/adapters/toml.js";
 
 const F = "/tmp/config.toml";
-const entry = { command: "npx", args: ["-y", "@sauerapple/agentroom", "mcp"] };
+const entry = {
+  command: "/usr/bin/node",
+  args: ["/opt/agentroom/dist/bin.js", "mcp"],
+};
 const BLOCK =
-  '[mcp_servers.agentroom]\ncommand = "npx"\nargs = ["-y","@sauerapple/agentroom","mcp"]\n';
+  '[mcp_servers.agentroom]\ncommand = "/usr/bin/node"\nargs = ["/opt/agentroom/dist/bin.js","mcp"]\n';
 
 const AE3 = `# my codex config
 model = "o5"
@@ -99,6 +102,52 @@ test("forms that do not define agentroom are not refused", () => {
   expect(() => setAgentroomTable(inline, F, entry)).toThrow(F);
   const array = `[[mcp_servers.other]] # not agentroom\ncommand = "o"\n`;
   expect(removeAgentroomTable(array, F)).toBe(array);
+});
+
+test("a header-like element line inside our table's multi-line array is removed with the table", () => {
+  const text = `a = 1\n\n[mcp_servers.agentroom]\nargs = [\n  ["a"],\n  [mcp_servers.x]\n]\ncommand = "old"\n\n[after]\nb = 2\n`;
+  const without = `a = 1\n\n[after]\nb = 2\n`;
+  expect(removeAgentroomTable(text, F)).toBe(without);
+  expect(setAgentroomTable(text, F, entry)).toBe(`${without}\n${BLOCK}`);
+});
+
+test("a header-like line inside another table's multi-line array is not a header", () => {
+  const text = `[other]\nlist = [\n  [mcp_servers.agentroom]\n]\n`;
+  expect(removeAgentroomTable(text, F)).toBe(text);
+  expect(setAgentroomTable(text, F, entry)).toBe(`${text}\n${BLOCK}`);
+});
+
+test("an escaped quote run in a multi-line basic string does not end it", () => {
+  const text = `[mcp_servers.agentroom]\ncommand = "old"\nnote = """\nsay \\"""\n[mcp_servers.agentroom.env]\nstill = "string"\n"""\n\n[after]\nb = 2\n`;
+  const without = `[after]\nb = 2\n`;
+  expect(removeAgentroomTable(text, F)).toBe(without);
+  const out = setAgentroomTable(text, F, entry);
+  expect(out).toBe(`${without}\n${BLOCK}`);
+  expect(out.match(/\[mcp_servers\.agentroom\]/g)).toHaveLength(1);
+});
+
+test("a closing delimiter with extra quotes ends the string", () => {
+  const text = `x = """a""""\n\n[mcp_servers.agentroom]\ncommand = "old"\n`;
+  expect(setAgentroomTable(text, F, entry)).toBe(`x = """a""""\n\n${BLOCK}`);
+});
+
+test.each([
+  ["unterminated array", `[mcp_servers.agentroom]\nargs = [\n  "a",\n`],
+  ["unterminated multi-line string", `note = """\nnever closed\n`],
+  [
+    "unmatched closing bracket",
+    `x = ]\n[mcp_servers.agentroom]\ncommand = "o"\n`,
+  ],
+])("refuses to write a file with an %s, naming it", (_name, text) => {
+  expect(() => setAgentroomTable(text, F, entry)).toThrow(
+    /cannot rewrite it safely/,
+  );
+  expect(() => setAgentroomTable(text, F, entry)).toThrow(F);
+});
+
+test("an unbalanced file without our table is left as is on remove", () => {
+  const text = `note = """\nnever closed\n`;
+  expect(removeAgentroomTable(text, F)).toBe(text);
 });
 
 test("triple quotes inside a one-line string do not open a multi-line string", () => {

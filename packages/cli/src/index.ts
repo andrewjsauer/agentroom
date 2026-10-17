@@ -14,6 +14,7 @@ import { uninstall } from "./commands/uninstall.js";
 import { up } from "./commands/up.js";
 import { watch } from "./commands/watch.js";
 import { type CliContext, CliError } from "./context.js";
+import { safeBody } from "./safe-text.js";
 
 export { type CliContext, CliError } from "./context.js";
 export { DEFAULT_RELAY, resolveRelay } from "./relay-url.js";
@@ -67,13 +68,14 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
         return await hook(parsed.positionals, ctx);
     }
   } catch (err) {
+    // Messages can carry relay- or peer-supplied text: strip escapes before the terminal.
     if (err instanceof CliError) {
-      ctx.stderr.write(`agentroom: ${err.message}\n`);
+      ctx.stderr.write(`agentroom: ${safeBody(err.message)}\n`);
       if (err.code === 2) ctx.stderr.write(USAGE);
       return err.code;
     }
     const message = err instanceof Error ? err.message : String(err);
-    ctx.stderr.write(`agentroom: ${message}\n`);
+    ctx.stderr.write(`agentroom: ${safeBody(message)}\n`);
     return 1;
   }
 }
