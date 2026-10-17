@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { findOnPath } from "@agentroom/mcp";
 import { isAdapterAgent, uninstallAdapter } from "../adapters/index.js";
-import { uninstallStatusLine } from "../claude-settings.js";
+import { uninstallAskRules, uninstallStatusLine } from "../claude-settings.js";
 import { type CliContext, CliError } from "../context.js";
 
 /**
- * `agentroom uninstall claude`: restore the status line, then remove the plugin (KTD18).
+ * `agentroom uninstall claude`: restore the status line, drop the ask rules, then remove the plugin (KTD18).
  * `uninstall codex|gemini|cursor [--project]`: remove the MCP entry and the snippet block.
  */
 export function uninstall(
@@ -24,6 +24,7 @@ export function uninstall(
     );
   }
   ctx.stdout.write(`${uninstallStatusLine(ctx)}\n`);
+  uninstallAskRules(ctx);
   const claude = findOnPath(ctx.env.PATH, "claude");
   if (claude === undefined) {
     ctx.stdout.write(

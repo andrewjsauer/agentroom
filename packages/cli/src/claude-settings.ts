@@ -135,3 +135,47 @@ export function uninstallStatusLine(ctx: CliContext): string {
   rmSync(statePath(ctx), { force: true });
   return text;
 }
+
+/** The tools that post to the room, under the plugin's and the plain MCP entry's names. */
+export const ASK_TOOLS = [
+  "mcp__plugin_agentroom_agentroom__send",
+  "mcp__plugin_agentroom_agentroom__handoff",
+  "mcp__agentroom__send",
+  "mcp__agentroom__handoff",
+];
+
+/**
+ * Add ASK_TOOLS to `permissions.ask`, so Claude Code asks before each post to the room even in
+ * auto or accept-edits mode. Keeps every other rule; idempotent. Returns the file.
+ */
+export function installAskRules(ctx: CliContext): string | undefined {
+  const file = claudeSettingsPath(ctx.env);
+  if (file === undefined) return undefined;
+  const settings = readSettings(file);
+  const permissions = isObject(settings.permissions)
+    ? settings.permissions
+    : {};
+  const ask = Array.isArray(permissions.ask) ? permissions.ask : [];
+  const missing = ASK_TOOLS.filter((t) => !ask.includes(t));
+  if (missing.length > 0) {
+    permissions.ask = [...ask, ...missing];
+    settings.permissions = permissions;
+    writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+  }
+  return file;
+}
+
+/** Remove ASK_TOOLS from `permissions.ask`, dropping `ask` and `permissions` if left empty. */
+export function uninstallAskRules(ctx: CliContext): void {
+  const file = claudeSettingsPath(ctx.env);
+  if (file === undefined) return;
+  const settings = readSettings(file);
+  const permissions = settings.permissions;
+  if (!isObject(permissions) || !Array.isArray(permissions.ask)) return;
+  const ask = permissions.ask.filter((t) => !ASK_TOOLS.includes(t));
+  if (ask.length === permissions.ask.length) return;
+  if (ask.length > 0) permissions.ask = ask;
+  else delete permissions.ask;
+  if (Object.keys(permissions).length === 0) delete settings.permissions;
+  writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+}

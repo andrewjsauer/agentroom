@@ -8,7 +8,11 @@ import {
   roomExists,
 } from "@agentroom/mcp";
 import { installAdapter, isAdapterAgent } from "../adapters/index.js";
-import { installStatusLine, isObject } from "../claude-settings.js";
+import {
+  installAskRules,
+  installStatusLine,
+  isObject,
+} from "../claude-settings.js";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 
 /**
@@ -111,6 +115,15 @@ function checkoutRoot(entryPath: string): string | undefined {
     : undefined;
 }
 
+function writeAskRules(ctx: CliContext): void {
+  const file = installAskRules(ctx);
+  if (file !== undefined) {
+    ctx.stdout.write(
+      `Claude Code will ask before agentroom posts to the room (permissions.ask in ${file}).\n`,
+    );
+  }
+}
+
 function writeStatusLine(ctx: CliContext): void {
   const file = installStatusLine(ctx);
   ctx.stdout.write(
@@ -123,7 +136,7 @@ function writeStatusLine(ctx: CliContext): void {
 /**
  * Set Claude Code up (KTD3): from a checkout with `claude` on PATH, install the plugin from the
  * repo-root marketplace; from an npm copy, register the MCP server (M1); without `claude`,
- * write `.mcp.json` (M1). The status line is written for checkout entries.
+ * write `.mcp.json` (M1). The status line is written for checkout entries; the ask rules for posting tools always.
  */
 function installClaude(roomId: string, ctx: CliContext): number {
   const claude = findOnPath(ctx.env.PATH, "claude");
@@ -151,6 +164,7 @@ function installClaude(roomId: string, ctx: CliContext): number {
       return 1;
     }
     writeStatusLine(ctx);
+    writeAskRules(ctx);
     ctx.stdout.write(
       "Installed the agentroom Claude Code plugin (user scope). Restart Claude Code to load the agentroom plugin (or run /reload-plugins), then type /agentroom:sync.\n",
     );
@@ -159,6 +173,7 @@ function installClaude(roomId: string, ctx: CliContext): number {
   if (claude) {
     const code = registerMcp(claude, roomId, ctx);
     if (code !== 0) return code;
+    writeAskRules(ctx);
     if (npm) {
       ctx.stdout.write(
         "The Claude Code plugin (hooks, /agentroom commands, status line) installs from a checkout for now; npm installs get it with the npm release.\n",
@@ -169,6 +184,7 @@ function installClaude(roomId: string, ctx: CliContext): number {
     return 0;
   }
   writeProjectMcp(roomId, ctx);
+  writeAskRules(ctx);
   if (!npm) {
     writeStatusLine(ctx);
     if (root) {

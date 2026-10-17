@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { setCurrent, writeRoomFile } from "@agentroom/mcp";
 import { afterEach, expect, test } from "vitest";
-import { shellQuote } from "../src/claude-settings.js";
+import { ASK_TOOLS, shellQuote } from "../src/claude-settings.js";
 import { main } from "../src/index.js";
 import { makeCtx, remove, tempDir } from "./helpers.js";
 
@@ -158,7 +158,10 @@ test("AE6: install twice chains the original; uninstall restores it exactly", as
   const first = readFileSync(s.settingsFile, "utf8");
   const settings = s.settings();
   expect(settings.theme).toBe("dark");
-  expect(settings.permissions).toEqual({ allow: ["Bash(ls)"] });
+  expect(settings.permissions).toEqual({
+    allow: ["Bash(ls)"],
+    ask: ASK_TOOLS,
+  });
   expect(settings.statusLine).toEqual({
     type: "command",
     command: `${prefix(s.entry)} statusline --chain '~/bin/my-line'`,
@@ -172,6 +175,7 @@ test("AE6: install twice chains the original; uninstall restores it exactly", as
   );
   expect(await main(["uninstall", "claude"], s.ctx().ctx)).toBe(0);
   expect(s.settings().statusLine).toEqual(original);
+  expect(s.settings().permissions).toEqual({ allow: ["Bash(ls)"] });
   expect(existsSync(s.state())).toBe(false);
   expect(calls(s.fake.log).at(-1)).toEqual([
     "plugin",
@@ -250,7 +254,8 @@ test("an npm entry keeps the M1 mcp add path and says the plugin comes with the 
   expect(await main(["install", "claude"], t.ctx)).toBe(0);
   expect(calls(s.fake.log)[1]?.slice(0, 2)).toEqual(["mcp", "add"]);
   expect(t.out()).toContain("npm release");
-  expect(existsSync(s.settingsFile)).toBe(false);
+  // No status line from an npm copy, but the ask rules for posting tools.
+  expect(s.settings()).toEqual({ permissions: { ask: ASK_TOOLS } });
 });
 
 test("without claude: .mcp.json, the status line, and the --plugin-dir line", async () => {
@@ -262,4 +267,30 @@ test("without claude: .mcp.json, the status line, and the --plugin-dir line", as
   expect(t.out()).toContain(
     `claude --plugin-dir ${join(s.root, "plugins", "claude-code")}`,
   );
+});
+
+test("the ask rules keep the user's own, are not duplicated, and uninstall removes only ours", async () => {
+  const s = setup();
+  writeFileSync(
+    s.settingsFile,
+    JSON.stringify({
+      permissions: {
+        defaultMode: "auto",
+        ask: ["Bash(git push:*)", ASK_TOOLS[0]],
+      },
+    }),
+  );
+  const t = s.ctx();
+  await main(["install", "claude"], t.ctx);
+  await main(["install", "claude"], s.ctx().ctx);
+  expect(s.settings().permissions).toEqual({
+    defaultMode: "auto",
+    ask: ["Bash(git push:*)", ...ASK_TOOLS],
+  });
+  expect(t.out()).toContain("Claude Code will ask before agentroom posts");
+  await main(["uninstall", "claude"], s.ctx().ctx);
+  expect(s.settings().permissions).toEqual({
+    defaultMode: "auto",
+    ask: ["Bash(git push:*)"],
+  });
 });
