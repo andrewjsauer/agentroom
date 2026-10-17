@@ -2,9 +2,11 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -294,6 +296,45 @@ test("the ask rules keep the user's own, are not duplicated, and uninstall remov
     defaultMode: "auto",
     ask: ["Bash(git push:*)"],
   });
+});
+
+test("a symlinked settings.json is written through the link, keeps its mode, and the config dir is not chmodded", async () => {
+  const s = setup();
+  const dotfiles = dir();
+  const real = join(dotfiles, "claude-settings.json");
+  writeFileSync(real, JSON.stringify({ theme: "dark" }));
+  chmodSync(real, 0o644);
+  const configDir = join(s.settingsFile, "..");
+  chmodSync(configDir, 0o755);
+  symlinkSync(real, s.settingsFile);
+
+  expect(await main(["install", "claude"], s.ctx().ctx)).toBe(0);
+  expect(lstatSync(s.settingsFile).isSymbolicLink()).toBe(true);
+  const written = JSON.parse(readFileSync(real, "utf8"));
+  expect(written.theme).toBe("dark");
+  expect(written.statusLine.command).toContain(" statusline");
+  expect(written.permissions.ask).toEqual(ASK_TOOLS);
+  expect(statSync(real).mode & 0o777).toBe(0o644);
+  expect(statSync(configDir).mode & 0o777).toBe(0o755);
+
+  expect(await main(["uninstall", "claude"], s.ctx().ctx)).toBe(0);
+  expect(lstatSync(s.settingsFile).isSymbolicLink()).toBe(true);
+  expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ theme: "dark" });
+  expect(statSync(real).mode & 0o777).toBe(0o644);
+  expect(statSync(configDir).mode & 0o777).toBe(0o755);
+});
+
+test("a missing Claude config dir is created 0700 with a 0600 settings.json", async () => {
+  const s = setup();
+  const configDir = join(dir(), "fresh-claude");
+  expect(
+    await main(
+      ["install", "claude"],
+      s.ctx({ CLAUDE_CONFIG_DIR: configDir }).ctx,
+    ),
+  ).toBe(0);
+  expect(statSync(configDir).mode & 0o777).toBe(0o700);
+  expect(statSync(join(configDir, "settings.json")).mode & 0o777).toBe(0o600);
 });
 
 test("uninstall claude removes the user-scope MCP server before the plugin", async () => {

@@ -2,6 +2,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { agentroomHome, writeAtomic } from "@agentroom/mcp";
 import { type CliContext, CliError } from "./context.js";
+import { writeConfigFile } from "./write-file.js";
 
 /** POSIX single-quoting for one shell word. */
 export const shellQuote = (s: string): string =>
@@ -49,6 +50,14 @@ function readSettings(file: string): Json {
     throw new CliError(`${file} is not a JSON object; fix it, then rerun`);
   }
   return parsed;
+}
+
+/**
+ * settings.json belongs to Claude Code (often a symlink into a dotfiles repo): write through the
+ * link, keep its mode, and never chmod its directory. A new file is 0600.
+ */
+function writeSettings(file: string, settings: Json): void {
+  writeConfigFile(file, `${JSON.stringify(settings, null, 2)}\n`, 0o600);
 }
 
 function readState(ctx: CliContext): InstallState | undefined {
@@ -111,7 +120,7 @@ export function installStatusLine(ctx: CliContext): string | undefined {
     statePath(ctx),
     `${JSON.stringify({ v: 1, original, installed: command } satisfies InstallState)}\n`,
   );
-  writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+  writeSettings(file, settings);
   return file;
 }
 
@@ -127,7 +136,7 @@ export function uninstallStatusLine(ctx: CliContext): string {
   if (isOurs(settings.statusLine, ctx, state)) {
     if (state.original === null) delete settings.statusLine;
     else settings.statusLine = state.original;
-    writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+    writeSettings(file, settings);
     text = `Restored your previous status line in ${file}.`;
   } else {
     text = `The status line in ${file} changed since install; left it as is.`;
@@ -160,7 +169,7 @@ export function installAskRules(ctx: CliContext): string | undefined {
   if (missing.length > 0) {
     permissions.ask = [...ask, ...missing];
     settings.permissions = permissions;
-    writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+    writeSettings(file, settings);
   }
   return file;
 }
@@ -177,5 +186,5 @@ export function uninstallAskRules(ctx: CliContext): void {
   if (ask.length > 0) permissions.ask = ask;
   else delete permissions.ask;
   if (Object.keys(permissions).length === 0) delete settings.permissions;
-  writeAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+  writeSettings(file, settings);
 }
