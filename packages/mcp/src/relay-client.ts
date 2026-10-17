@@ -5,9 +5,43 @@ import {
   PROTOCOL_VERSION,
   RelayFrame,
   roomUrl,
+  stripControl,
   type WelcomeFrame,
 } from "@agentroom/protocol";
+import { MAX_FRAME_BYTES } from "@agentroom/protocol/relay-core";
 import WebSocket from "ws";
+
+/**
+ * Largest frame a client accepts: the relay's own frame limit (which bounds every blob, hello and
+ * meta it can echo back) plus room for the JSON around them. `ws` defaults to 100 MiB.
+ */
+export const MAX_INBOUND_FRAME_BYTES = MAX_FRAME_BYTES + 4 * 1024;
+
+/** A connection that stays live this long resets the backoff; shorter ones keep it growing. */
+const STABLE_MS = 30_000;
+
+const ERROR_MESSAGE_CHARS = 200;
+
+function connect(url: string): WebSocket {
+  return new WebSocket(url, { maxPayload: MAX_INBOUND_FRAME_BYTES });
+}
+
+/** Parse a relay frame; an error's free-text message is stripped of control characters and capped. */
+function parseRelayFrame(raw: string): RelayFrame | undefined {
+  let parsed: ReturnType<typeof RelayFrame.safeParse>;
+  try {
+    parsed = RelayFrame.safeParse(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+  if (!parsed.success) return undefined;
+  const f = parsed.data;
+  if (f.t !== "error") return f;
+  return {
+    ...f,
+    message: stripControl(f.message).slice(0, ERROR_MESSAGE_CHARS),
+  };
+}
 
 export type ConnectionState = "connecting" | "live" | "backoff" | "gone";
 export type GoneCode = "room_not_found" | "room_expired" | "closed";
@@ -23,7 +57,8 @@ export interface RelayClientOptions {
   /** Every relay error except the terminal ones (KTD13). */
   onError?(code: ErrorCode, message: string): void;
   onState?(state: ConnectionState): void;
-  backoff?: { initialMs?: number; maxMs?: number };
+  /** `stableMs`: how long a connection must stay live to reset the backoff (default 30 s). */
+  backoff?: { initialMs?: number; maxMs?: number; stableMs?: number };
 }
 
 function log(message: string): void {
@@ -47,6 +82,8 @@ export class RelayClient {
   private ws: WebSocket | undefined;
   private timer: NodeJS.Timeout | undefined;
   private attempt = 0;
+  /** When the current connection got its welcome; undefined until then. */
+  private liveSince: number | undefined;
   private stopped = false;
 
   constructor(private readonly opts: RelayClientOptions) {
@@ -55,6 +92,11 @@ export class RelayClient {
 
   start(): void {
     this.connect();
+  }
+
+  /** Reconnect attempts since the last connection that stayed up long enough. */
+  get backoffAttempt(): number {
+    return this.attempt;
   }
 
   stop(): void {
@@ -85,8 +127,9 @@ export class RelayClient {
   private connect(): void {
     if (this.stopped) return;
     this.setState("connecting");
-    const ws = new WebSocket(roomUrl(this.opts.url, this.opts.roomId));
+    const ws = connect(roomUrl(this.opts.url, this.opts.roomId));
     this.ws = ws;
+    this.liveSince = undefined;
     ws.on("open", () => {
       const hello: HelloFrame = {
         t: "hello",
@@ -101,23 +144,27 @@ export class RelayClient {
     ws.on("close", () => {
       if (this.ws !== ws || this.stopped || this.state === "gone") return;
       this.setState("backoff");
-      const { initialMs, maxMs } = this.opts.backoff ?? {};
+      const { initialMs, maxMs, stableMs } = this.opts.backoff ?? {};
+      if (
+        this.liveSince !== undefined &&
+        Date.now() - this.liveSince >= (stableMs ?? STABLE_MS)
+      ) {
+        this.attempt = 0;
+      }
       const delay = backoffDelay(this.attempt++, initialMs, maxMs);
       this.timer = setTimeout(() => this.connect(), delay);
     });
   }
 
   private onFrame(raw: string): void {
-    let frame: RelayFrame;
-    try {
-      frame = RelayFrame.parse(JSON.parse(raw));
-    } catch {
+    const frame = parseRelayFrame(raw);
+    if (frame === undefined) {
       log("ignored a malformed relay frame");
       return;
     }
     switch (frame.t) {
       case "welcome":
-        this.attempt = 0;
+        this.liveSince = Date.now();
         this.setState("live");
         this.opts.onWelcome(frame);
         break;
@@ -154,7 +201,7 @@ export function oneShot(opts: {
   timeoutMs?: number;
 }): Promise<WelcomeFrame | ErrorFrame> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(roomUrl(opts.url, opts.hello.room));
+    const ws = connect(roomUrl(opts.url, opts.hello.room));
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error(`relay at ${opts.url} did not answer`));
@@ -168,15 +215,8 @@ export function oneShot(opts: {
     };
     ws.on("open", () => ws.send(JSON.stringify(opts.hello)));
     ws.on("message", (data) => {
-      let parsed: ReturnType<typeof RelayFrame.safeParse>;
-      try {
-        parsed = RelayFrame.safeParse(JSON.parse(data.toString()));
-      } catch {
-        return;
-      }
-      if (!parsed.success) return;
-      const f = parsed.data;
-      if (f.t === "welcome" || f.t === "error") finish(() => resolve(f));
+      const f = parseRelayFrame(data.toString());
+      if (f?.t === "welcome" || f?.t === "error") finish(() => resolve(f));
     });
     ws.on("error", (err) =>
       finish(() =>
@@ -225,7 +265,7 @@ export function connectOnce(opts: {
 }): Promise<OnceSession> {
   const timeoutMs = opts.timeoutMs ?? 10_000;
   return new Promise((resolveConnect, rejectConnect) => {
-    const ws = new WebSocket(roomUrl(opts.url, opts.hello.room));
+    const ws = connect(roomUrl(opts.url, opts.hello.room));
     const msgs: { seq: number; blob: string }[] = [];
     let welcome: WelcomeFrame | undefined;
     let ready = false;
@@ -291,12 +331,8 @@ export function connectOnce(opts: {
     };
     ws.on("open", () => ws.send(JSON.stringify(opts.hello)));
     ws.on("message", (data) => {
-      let f: RelayFrame;
-      try {
-        f = RelayFrame.parse(JSON.parse(data.toString()));
-      } catch {
-        return;
-      }
+      const f = parseRelayFrame(data.toString());
+      if (f === undefined) return;
       if (f.t === "error") {
         fail(new RelayError(f.code, f.message));
         return;

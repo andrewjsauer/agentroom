@@ -228,7 +228,8 @@ Claude Code push: if channels are available, the MCP server also declares the ch
 
 ## Failure handling
 
-- Relay unreachable: MCP tools return a clear error; client reconnects with backoff and resumes from last seq.
+- Relay unreachable: MCP tools return a clear error; client reconnects with backoff and resumes from last seq. The backoff (full jitter, 500 ms doubling to 30 s) resets only after a connection has stayed live for 30 s, so a relay that accepts and drops connections is not hammered.
+- Clients accept relay frames up to the protocol's 96 KiB frame limit plus 4 KiB (the `ws` default is 100 MiB); a larger frame closes the connection. A relay error's free-text `message` is stripped of control characters and cut to 200 characters before it is logged to stderr or surfaced.
 - Room expired or closed: on `room_expired`, `room_not_found` or `closed` the MCP server stops reconnecting, rejects any in-flight send at once, deletes the room directory, clears `current` if it names the room, allows one final read of unread messages, and then answers every tool with a terminal text telling the user to run `agentroom up` again ("The room was closed by its creator." for `closed`, the expiry text otherwise).
 - Non-terminal relay errors (`rate_limited`, `too_large`, `room_full`) fail the oldest in-flight send at once with a text naming the cause instead of waiting out the 10 s echo timeout; sends are serialized, so that send caused it. On `room_full` the client stays in backoff and keeps reconnecting.
 - An exception while processing an inbound message is logged to stderr and never crashes the server.

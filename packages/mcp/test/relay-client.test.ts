@@ -1,10 +1,13 @@
+import type { AddressInfo } from "node:net";
 import { generateCloseKeyPair, signClose } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { type WebSocket, WebSocketServer } from "ws";
 import {
   backoffDelay,
   connectOnce,
   type GoneCode,
+  MAX_INBOUND_FRAME_BYTES,
   oneShot,
   RelayClient,
   RelayError,
@@ -267,6 +270,172 @@ test("connectOnce close: resolves on closed; bad signature rejects", async () =>
   ).rejects.toMatchObject({ code: "bad_signature" });
   await closeRoom(kp.secretKey);
   expect(relay.snapshot(ROOM)).toBeUndefined();
+});
+
+test("a flapping relay keeps growing the backoff; a connection up for stableMs resets it", async () => {
+  await createRoom();
+  const flap = async (c: RelayClient, welcomes: () => number) => {
+    const before = welcomes();
+    relay.disconnectAll();
+    await until(() => welcomes() === before + 1 && c.state === "live");
+  };
+  const { c, welcomes } = client();
+  await until(() => c.state === "live");
+  for (let i = 0; i < 3; i++) await flap(c, welcomes);
+  expect(c.backoffAttempt).toBe(3);
+
+  let stableWelcomes = 0;
+  const stable = new RelayClient({
+    url: relay.url,
+    roomId: ROOM,
+    initialSince: 0,
+    onWelcome: () => {
+      stableWelcomes++;
+    },
+    onMsg: () => {},
+    onPresence: () => {},
+    onGone: () => {},
+    backoff: { initialMs: 5, maxMs: 20, stableMs: 300 },
+  });
+  clients.push(stable);
+  stable.start();
+  await until(() => stable.state === "live");
+  await flap(stable, () => stableWelcomes);
+  await flap(stable, () => stableWelcomes);
+  expect(stable.backoffAttempt).toBe(2);
+  await new Promise((r) => setTimeout(r, 350));
+  await flap(stable, () => stableWelcomes);
+  expect(stable.backoffAttempt).toBe(1);
+});
+
+describe("against a hostile relay", () => {
+  let server: WebSocketServer;
+  let url: string;
+  let onHello: (ws: WebSocket) => void;
+
+  beforeEach(async () => {
+    server = new WebSocketServer({ port: 0 });
+    await new Promise((r) => server.once("listening", r));
+    url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    server.on("connection", (ws) => ws.once("message", () => onHello(ws)));
+  });
+  afterEach(async () => {
+    for (const ws of server.clients) ws.terminate();
+    await new Promise((r) => server.close(r));
+  });
+
+  const welcome = JSON.stringify({
+    t: "welcome",
+    seq: 0,
+    members: 1,
+    expiresAt: 1,
+    nonce: "n",
+    meta: "m",
+  });
+  const hostileError = JSON.stringify({
+    t: "error",
+    code: "rate_limited",
+    message: `\u001b]52;c;cGF5bG9hZA==\u0007\u001b[2J\nagentroom: FAKE ${"x".repeat(500)}`,
+  });
+
+  test("relay error text is stripped of control characters and capped before stderr", async () => {
+    onHello = (ws) => {
+      ws.send(welcome);
+      ws.send(hostileError);
+    };
+    const writes: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = ((chunk: string) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    const messages: string[] = [];
+    try {
+      const c = new RelayClient({
+        url,
+        roomId: ROOM,
+        initialSince: 0,
+        onWelcome: () => {},
+        onMsg: () => {},
+        onPresence: () => {},
+        onGone: () => {},
+        onError: (_code, message) => messages.push(message),
+      });
+      clients.push(c);
+      c.start();
+      await until(() => messages.length === 1);
+    } finally {
+      process.stderr.write = original;
+    }
+    const line = writes.find((w) => w.includes("relay error")) as string;
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
+    expect(line.slice(0, -1)).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(line).toContain("agentroom: FAKE");
+    expect(messages[0]?.length).toBe(200);
+
+    const res = await oneShot({ url, hello: hello() });
+    expect(res.t).toBe("welcome");
+    onHello = (ws) => ws.send(hostileError);
+    const err = await oneShot({ url, hello: hello() });
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
+    expect(err.t === "error" && err.message).not.toMatch(/[\u0000-\u001f]/);
+    await expect(connectOnce({ url, hello: hello() })).rejects.toThrow(
+      /^\]52;c;cGF5bG9hZA==\[2Jagentroom: FAKE x+$/,
+    );
+  });
+
+  test("a frame over the protocol limit closes the connection and is never delivered", async () => {
+    onHello = (ws) => {
+      ws.send(welcome);
+      ws.send(
+        JSON.stringify({
+          t: "msg",
+          seq: 1,
+          blob: "A".repeat(MAX_INBOUND_FRAME_BYTES),
+        }),
+      );
+    };
+    const msgs: number[] = [];
+    let welcomes = 0;
+    const c = new RelayClient({
+      url,
+      roomId: ROOM,
+      initialSince: 0,
+      onWelcome: () => {
+        welcomes++;
+      },
+      onMsg: (seq) => msgs.push(seq),
+      onPresence: () => {},
+      onGone: () => {},
+      backoff: { initialMs: 5, maxMs: 20 },
+    });
+    clients.push(c);
+    c.start();
+    await until(() => welcomes >= 2);
+    expect(msgs).toEqual([]);
+    c.stop();
+  });
+
+  test("a frame at the protocol's largest envelope is accepted", async () => {
+    const blob = "A".repeat(Math.ceil((64 * 1024) / 3) * 4);
+    onHello = (ws) => {
+      ws.send(welcome);
+      ws.send(JSON.stringify({ t: "msg", seq: 1, blob }));
+    };
+    const msgs: number[] = [];
+    const c = new RelayClient({
+      url,
+      roomId: ROOM,
+      initialSince: 0,
+      onWelcome: () => {},
+      onMsg: (seq) => msgs.push(seq),
+      onPresence: () => {},
+      onGone: () => {},
+    });
+    clients.push(c);
+    c.start();
+    await until(() => msgs.length === 1);
+  });
 });
 
 test("connectOnce: unknown room rejects room_not_found; unreachable rejects", async () => {
