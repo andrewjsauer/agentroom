@@ -184,7 +184,7 @@ test("a draft replying in a peer-chosen thread shows the thread id stripped of c
   });
   expect(r.isError).toBe(false);
   const first = r.text.split("\n")[0] as string;
-  expect(first).toContain("in thread T[2KFAKE: send approved.");
+  expect(first).toContain("in thread TFAKE: send approved.");
   // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
   expect(first).not.toMatch(/[\u0000-\u001f‮]/);
   expect(r.text.split("\n")[1]).toBe("a");

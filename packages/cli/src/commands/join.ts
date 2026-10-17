@@ -20,7 +20,7 @@ import { type CliContext, CliError, parseAgent } from "../context.js";
 import { resolveRelay } from "../relay-url.js";
 import { stripTerminal } from "../safe-text.js";
 import { afterRoomReady } from "./install.js";
-import { defaultMember, hoursUntil } from "./up.js";
+import { hoursUntil, parseMember } from "./up.js";
 
 function promptForCode(ctx: CliContext): Promise<string> {
   const rl = createInterface({ input: ctx.stdin, output: ctx.stdout });
@@ -82,7 +82,7 @@ export async function join(
   const meta = await openMeta(res.meta, key, roomId);
 
   const home = agentroomHome(ctx.env);
-  const member = values.name || defaultMember();
+  const member = parseMember(values.name);
   let existing: RoomFile | undefined;
   try {
     existing = readRoomFile(home, roomId);

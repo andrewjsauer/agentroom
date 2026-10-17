@@ -23,6 +23,16 @@ export function defaultMember(): string {
   return userInfo().username;
 }
 
+/** The envelope schema caps `from.member` at 64 characters; refuse early rather than at every send. */
+export const MEMBER_MAX = 64;
+export function parseMember(name: string | undefined): string {
+  const member = name || defaultMember();
+  if (member.length === 0 || member.length > MEMBER_MAX) {
+    throw new CliError(`--name must be 1 to ${MEMBER_MAX} characters`, 2);
+  }
+  return member;
+}
+
 export function hoursUntil(ms: number): number {
   return Math.round((ms - Date.now()) / 3_600_000);
 }
@@ -57,7 +67,7 @@ export async function up(
   ctx: CliContext,
 ): Promise<number> {
   const agent = parseAgent(values.agent);
-  const member = values.name || defaultMember();
+  const member = parseMember(values.name);
   const relay = resolveRelay(values.relay, ctx.env);
   let maxAgentChain = 3;
   if (values["max-chain"] !== undefined) {

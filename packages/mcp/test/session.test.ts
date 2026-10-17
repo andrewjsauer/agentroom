@@ -303,7 +303,17 @@ test("inbox returns one message whole even when it alone is over the budget", as
 test("a synthetic flood keeps history and queue.jsonl bounded and holds the room ceiling", async () => {
   const { home, session } = await pair();
   const flood = 2 * QUEUE_COMPACT_RECORDS + 500;
+  // Paced: the relay drops a socket with 2 MiB unsent and replays at most 500 on reconnect, so
+  // an unpaced burst (impossible through the rate limit) would leave gaps in the queue.
   for (let i = 0; i < flood; i++) {
+    if (i % 400 === 399) {
+      const want = i;
+      await until(
+        () => (readStatus(home, room.roomId)?.lastSeq ?? 0) >= want,
+        20_000,
+        "flood batch processed",
+      );
+    }
     const id = ulid();
     relay.inject(
       room.roomId,

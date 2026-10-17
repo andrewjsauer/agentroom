@@ -312,3 +312,13 @@ test("up --ttl sends maxAgeSec and prints the max-age deadline", async () => {
     );
   }
 });
+
+test("--name longer than 64 characters is refused before any relay call", async () => {
+  const t = makeCtx(tempDir());
+  const code = await main(
+    ["up", "--name", "n".repeat(65), "--relay", "ws://127.0.0.1:1"],
+    t.ctx,
+  );
+  expect(code).toBe(2);
+  expect(t.err()).toContain("--name must be 1 to 64 characters");
+});

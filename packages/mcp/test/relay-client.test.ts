@@ -384,7 +384,7 @@ describe("against a hostile relay", () => {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
     expect(err.t === "error" && err.message).not.toMatch(/[\u0000-\u001f]/);
     await expect(connectOnce({ url, hello: hello() })).rejects.toThrow(
-      /^\]52;c;cGF5bG9hZA==\[2Jagentroom: FAKE x+$/,
+      /^agentroom: FAKE x+$/,
     );
   });
 
