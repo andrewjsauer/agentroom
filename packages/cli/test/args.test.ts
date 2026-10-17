@@ -72,12 +72,14 @@ test("--help prints usage and --version prints the version", async () => {
 });
 
 test("relay URL precedence: flag, then AGENTROOM_RELAY, then the default", () => {
-  expect(resolveRelay("ws://flag", { AGENTROOM_RELAY: "ws://env" })).toBe(
-    "ws://flag",
-  );
-  expect(resolveRelay(undefined, { AGENTROOM_RELAY: "ws://env" })).toBe(
-    "ws://env",
-  );
+  expect(
+    resolveRelay("wss://flag.example", {
+      AGENTROOM_RELAY: "wss://env.example",
+    }),
+  ).toBe("wss://flag.example");
+  expect(
+    resolveRelay(undefined, { AGENTROOM_RELAY: "wss://env.example" }),
+  ).toBe("wss://env.example");
   expect(resolveRelay(undefined, {})).toBe(DEFAULT_RELAY);
   expect(resolveRelay("", {})).toBe(DEFAULT_RELAY);
 });

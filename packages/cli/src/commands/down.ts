@@ -14,6 +14,7 @@ import {
   isGone,
   loadRoom,
 } from "../context.js";
+import { checkRelayUrl } from "../relay-url.js";
 
 export const CREATOR_ONLY_TEXT =
   "Only the machine that created this room can close it. Ask the creator to run `agentroom down`; this room's local state goes away when the room closes or expires.";
@@ -31,7 +32,7 @@ export async function down(
   let once: OnceSession;
   try {
     once = await connectOnce({
-      url: room.relay,
+      url: checkRelayUrl(room.relay, "room.json"),
       hello: { t: "hello", room: roomId, proto: 1, closeOnly: true },
     });
   } catch (err) {

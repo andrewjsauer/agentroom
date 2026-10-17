@@ -6,6 +6,7 @@ import {
   readStatus,
 } from "@agentroom/mcp";
 import { type CliContext, forgetGoneRoom, resolveRoomId } from "../context.js";
+import { checkRelayUrl } from "../relay-url.js";
 
 export async function status(
   values: Record<string, string | undefined>,
@@ -29,7 +30,7 @@ export async function status(
   }
 
   const res = await oneShot({
-    url: room.relay,
+    url: checkRelayUrl(room.relay, "room.json"),
     hello: { t: "hello", room: roomId, proto: 1 },
   });
   if (res.t === "error") {

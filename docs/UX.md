@@ -30,6 +30,8 @@ Every command acts on the room named in `~/.agentroom/current` (set by the last 
 
 `up` and `join` call `install` for the named agent, then print what to restart. `up` and `join` also record the directory they ran in as the room's `projectDir`; Agent sessions started outside it get no room: `agentroom mcp` serves the no-room stub there (even with `--room`, so a user-scope MCP entry does not open the room to every project), there is no `between` delivery, and the status line shows no agentroom segment. The other CLI commands work on `current` from anywhere.
 
+Relay URLs (`--relay`, `AGENTROOM_RELAY`, and the relay saved in `room.json` when `status`, `say`, `approve`, `watch` or `down` reconnect) must be `wss://`; `ws://` is accepted only for `localhost`, `127.0.0.1` or `::1`. Anything else is refused before a connection is made, naming where the URL came from.
+
 ## Claude Code plugin
 
 The plugin lives in `plugins/claude-code/` and bundles the MCP server (`.mcp.json`), seven skills, two hooks (`hooks/hooks.json`) and a launcher (`scripts/agentroom.mjs`) that runs the checkout's built CLI in-process. Every file is a thin wrapper over a CLI subcommand. The repo root has a marketplace file (`.claude-plugin/marketplace.json`), so a checkout installs without publishing:

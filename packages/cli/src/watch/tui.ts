@@ -20,6 +20,7 @@ import {
   humanFrom,
   requireHumanTerminal,
 } from "../human.js";
+import { checkRelayUrl } from "../relay-url.js";
 import { connectForPost } from "../room-post.js";
 import { stripTerminal } from "../safe-text.js";
 import { applyEnvelope, emptyModel, parseInput, threads } from "./model.js";
@@ -41,6 +42,7 @@ export async function runWatch(
   requireHumanTerminal(ctx, { stdout: true, reason: HUMAN_MESSAGE_REASON });
   const home = agentroomHome(ctx.env);
   const { roomId, room } = loadRoom(roomFlag, ctx);
+  checkRelayUrl(room.relay, "room.json");
   const { key } = deriveRoom(parseShareCode(room.secret));
   const screen = ctx.stdout as Screen;
   let model = emptyModel(roomId, room.member);

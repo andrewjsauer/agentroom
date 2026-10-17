@@ -22,6 +22,7 @@ import {
   isGone,
   loadRoom,
 } from "./context.js";
+import { checkRelayUrl } from "./relay-url.js";
 
 export interface PostSession {
   room: RoomFile;
@@ -44,6 +45,7 @@ export async function connectForPost(
 ): Promise<PostSession> {
   const home = agentroomHome(ctx.env);
   const { roomId, room } = loadRoom(roomFlag, ctx);
+  checkRelayUrl(room.relay, "room.json");
   const { key } = deriveRoom(parseShareCode(room.secret));
   let once: OnceSession;
   try {

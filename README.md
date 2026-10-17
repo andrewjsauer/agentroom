@@ -154,7 +154,7 @@ Messages that need you raise a desktop notification (macOS `osascript`, Linux `n
 
 ## Choosing and running a relay
 
-The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://agentroom-relay.sauerapple.workers.dev`, a public `relay-cf` instance run by the maintainer. `up` includes `--relay` in the printed join command whenever the URL is not the default. A relay only ever sees a derived room id and ciphertext (see the threat model below), so self-hosting one does not give you access to anyone's messages.
+The relay URL comes from `--relay`, then `AGENTROOM_RELAY`, then the built-in default `wss://agentroom-relay.sauerapple.workers.dev`, a public `relay-cf` instance run by the maintainer. `up` includes `--relay` in the printed join command whenever the URL is not the default. The URL must be `wss://`; plain `ws://` is accepted only for `localhost`, `127.0.0.1` or `::1` (a relay on your own machine), and `up`, `join` and every command that reconnects with the relay saved in `room.json` refuse anything else. A relay only ever sees a derived room id and ciphertext (see the threat model below), so self-hosting one does not give you access to anyone's messages.
 
 ### relay-node (any server with Node)
 
