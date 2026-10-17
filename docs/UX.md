@@ -17,7 +17,7 @@ agentroom down                     # creator only: close the room now
 agentroom status
 agentroom watch                    # terminal chat pane (works with any agent)
 agentroom say [--thread id | --new] "<text>"   # human message; requires an interactive terminal (TTY)
-agentroom approve <thread>         # human approval; resets the chain limit; requires TTY
+agentroom approve <thread>         # human approval; resets the chain limit and your hard ceiling; requires TTY
 agentroom export [--thread id] [--format md|gh-issue]
 agentroom sync-mode [between|manual|live]   # delivery mode for Claude Code (no TTY needed)
 agentroom install <agent>          # write MCP config (and plugin plus status line, for Claude Code)
@@ -62,7 +62,7 @@ Plugin skills are namespaced, so the commands are typed as `/agentroom:<name>`. 
 | `/agentroom:ask <topic>` | Claude drafts, you approve | Claude writes the question with refs, calls `send` with `draft: true`, shows the draft and hash |
 | `/agentroom:handoff` | Claude drafts, you approve | Structured summary (decisions, open questions, refs) as a draft |
 | `/agentroom:send [hash]` | You | No hash: shows the pending draft read from disk. With the hash: releases it if it still matches. Never reaches the model |
-| `/agentroom:approve [thread]` | You | Human approval for a thread blocked by the chain limit; no argument picks the most recently updated waiting thread |
+| `/agentroom:approve [thread]` | You | Human approval for a thread blocked by the chain limit or the hard ceiling (only your own approve or say lifts the ceiling; a peer's does not); no argument picks the most recently updated waiting thread |
 | `/agentroom:sync-mode [between\|manual]` | You | Shows or sets the delivery mode; `live` is refused with an explanation |
 
 ### Why human messages go through a hook

@@ -3,6 +3,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import {
   assertNoSecrets,
+  type ChainState,
   chainRefusalText,
   chainState,
   checkChain,
@@ -17,6 +18,7 @@ import {
   resolveThread,
   seal,
   stripControl,
+  threadCeiling,
   ulid,
   waitingThreads,
 } from "@agentroom/protocol";
@@ -96,6 +98,8 @@ export interface ThreadSummary {
   lastActivity: number;
   /** Consecutive agent messages since the last human message in this thread. */
   agentRun: number;
+  /** Agent messages in this thread since this user last posted in it (hard ceiling 3N). */
+  agentRunSinceYou: number;
   waitingOnHuman: boolean;
 }
 
@@ -112,10 +116,18 @@ export interface RoomStatus {
   needsYou: number;
   decryptFailures: number;
   expiresAt: number | null;
-  /** Threads at or over the chain limit; thread ids are peer-chosen and untrusted. */
-  waitingOnHuman: { thread: string; count: number }[];
+  /** Threads at the chain limit or the hard ceiling; thread ids are peer-chosen and untrusted. */
+  waitingOnHuman: { thread: string; count: number; sinceYou: number }[];
   /** Consecutive agent messages across threads, against the room-wide limit (2N). */
   roomAgentRun: { count: number; limit: number };
+  /**
+   * Agent messages since this user's own last human message: room-wide against 6N, and the
+   * per-thread ceiling (3N). Only this user's say/approve resets them, not a peer's human message.
+   */
+  sinceYourLastPost: {
+    room: { count: number; limit: number };
+    threadLimit: number;
+  };
   /** Up to 10 threads, most recently active first, so a fresh session can find thread ids. */
   recentThreads: ThreadSummary[];
 }
@@ -242,7 +254,7 @@ export function createRoomSession(opts: {
   };
 
   /** The most recently active threads in the local queue, newest first. */
-  const recentThreads = (threads: Map<string, number>): ThreadSummary[] => {
+  const recentThreads = (chain: ChainState): ThreadSummary[] => {
     const byThread = new Map<
       string,
       { root: Envelope; messages: number; lastSeq: number; lastTs: number }
@@ -267,7 +279,8 @@ export function createRoomSession(opts: {
       .sort(([, a], [, b]) => b.lastSeq - a.lastSeq)
       .slice(0, RECENT_THREADS)
       .map(([thread, t]) => {
-        const agentRun = threads.get(thread) ?? 0;
+        const agentRun = chain.threads.get(thread) ?? 0;
+        const agentRunSinceYou = chain.ceilingThreads.get(thread) ?? 0;
         return {
           thread: sanitizeName(thread),
           rootKind: t.root.kind,
@@ -277,14 +290,17 @@ export function createRoomSession(opts: {
           messages: t.messages,
           lastActivity: t.lastTs,
           agentRun,
-          waitingOnHuman: agentRun >= maxAgentChain,
+          agentRunSinceYou,
+          waitingOnHuman:
+            agentRun >= maxAgentChain ||
+            agentRunSinceYou >= threadCeiling(maxAgentChain),
         };
       });
   };
 
   /** Full status for `room_status`; the only caller that pays for the chain scan. */
   const status = (): RoomStatus => {
-    const chain = chainState(ordered(), maxAgentChain);
+    const chain = chainState(ordered(), maxAgentChain, localIds);
     return {
       roomId,
       member: session.room.member,
@@ -297,9 +313,17 @@ export function createRoomSession(opts: {
       waitingOnHuman: waitingThreads(chain).map((w) => ({
         thread: sanitizeName(w.thread),
         count: w.count,
+        sinceYou: chain.ceilingThreads.get(w.thread) ?? 0,
       })),
       roomAgentRun: { count: chain.room, limit: 2 * maxAgentChain },
-      recentThreads: recentThreads(chain.threads),
+      sinceYourLastPost: {
+        room: {
+          count: chain.ceilingRoom,
+          limit: 2 * threadCeiling(maxAgentChain),
+        },
+        threadLimit: threadCeiling(maxAgentChain),
+      },
+      recentThreads: recentThreads(chain),
     };
   };
 
@@ -312,8 +336,9 @@ export function createRoomSession(opts: {
       expiresAt,
       lastSeq,
       updatedAt: Date.now(),
-      waitingOnHuman: waitingThreads(chainState(ordered(), maxAgentChain))
-        .length,
+      waitingOnHuman: waitingThreads(
+        chainState(ordered(), maxAgentChain, localIds),
+      ).length,
       ...(roomName === undefined ? {} : { roomName }),
     });
   };
@@ -612,9 +637,13 @@ export function createRoomSession(opts: {
     send(input) {
       const run = async () => {
         await ready;
+        syncExternalReads();
         const hist = ordered();
         const env = build(input, "mcp", hist);
-        const refusal = checkChain(chainState(hist, maxAgentChain), env.thread);
+        const refusal = checkChain(
+          chainState(hist, maxAgentChain, localIds),
+          env.thread,
+        );
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
         return { id: env.id, seq };

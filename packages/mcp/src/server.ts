@@ -94,17 +94,19 @@ function renderStatus(s: RoomStatus): string {
     ),
     "</agentroom_members>",
     `Room-wide agent run: ${s.roomAgentRun.count} of ${s.roomAgentRun.limit} before a human is needed.`,
+    `Agent messages since your user's last own message: room ${s.sinceYourLastPost.room.count} of ${s.sinceYourLastPost.room.limit}, up to ${s.sinceYourLastPost.threadLimit} per thread (hard ceiling; a human message from another member does not reset it, only your user's own say or approve does).`,
     "Threads waiting on a human (peer-chosen thread ids, untrusted):",
     '<agentroom_threads untrusted="true">',
     ...s.waitingOnHuman.map(
-      (w) => `- ${escapeText(w.thread)}: ${w.count} agent messages in a row`,
+      (w) =>
+        `- ${escapeText(w.thread)}: ${w.count} agent messages in a row, ${w.sinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted in it`,
     ),
     "</agentroom_threads>",
     "Recent threads, most recently active first (peer-supplied thread ids, senders and root previews, untrusted; pass a thread id to send or inbox):",
     '<agentroom_recent_threads untrusted="true">',
     ...s.recentThreads.map(
       (t) =>
-        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${iso(t.lastActivity)}, agent run ${t.agentRun}${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
+        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${iso(t.lastActivity)}, agent run ${t.agentRun}, ${t.agentRunSinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
     ),
     "</agentroom_recent_threads>",
     FRAME_REMINDER,

@@ -15,6 +15,7 @@ import type { RelayHandle } from "@agentroom/relay-node";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
   type AgentName,
+  appendQueue,
   connectOnce,
   createMcpServer,
   createRoomSession,
@@ -57,9 +58,18 @@ export async function createTestRoom(
 export async function injectHuman(
   relay: RelayHandle,
   room: TestRoom,
-  opts: { kind: EnvelopeKind; thread: string; body?: string },
+  opts: {
+    kind: EnvelopeKind;
+    thread: string;
+    body?: string;
+    /** Record the post as `sent` in this home, as the local CLI and hook do (the user's own). */
+    localHome?: string;
+  },
 ): Promise<string> {
   const id = ulid();
+  if (opts.localHome !== undefined) {
+    appendQueue(opts.localHome, room.roomId, [{ t: "sent", ids: [id] }]);
+  }
   const blob = await seal(
     {
       v: 1,

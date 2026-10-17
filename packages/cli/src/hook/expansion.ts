@@ -10,7 +10,7 @@ import { sayTarget } from "../commands/say.js";
 import { setDeliveryMode } from "../commands/sync-mode.js";
 import { type CliContext, loadRoom } from "../context.js";
 import { humanFrom } from "../human.js";
-import { connectForPost } from "../room-post.js";
+import { connectForPost, type PostSession } from "../room-post.js";
 import { id8, safeLine, stripTerminal } from "../safe-text.js";
 import { previewDraft, releaseDraft } from "./release.js";
 import { readHookInput } from "./stdin.js";
@@ -111,9 +111,12 @@ async function say(args: string, ctx: CliContext): Promise<string> {
 }
 
 /** The most recently updated thread at the chain limit (KTD9). */
-function latestWaiting(history: Envelope[], limit: number): string | undefined {
+function latestWaiting(s: PostSession): string | undefined {
+  const { history } = s;
   const waiting = new Set(
-    waitingThreads(chainState(history, limit)).map((w) => w.thread),
+    waitingThreads(chainState(history, s.maxAgentChain, s.localIds)).map(
+      (w) => w.thread,
+    ),
   );
   for (let i = history.length - 1; i >= 0; i--) {
     const e = history[i] as Envelope;
@@ -132,7 +135,7 @@ async function approve(args: string, ctx: CliContext): Promise<string> {
     const id = ulid();
     let thread: string | undefined;
     if (requested === "") {
-      thread = latestWaiting(s.history, s.maxAgentChain);
+      thread = latestWaiting(s);
       if (thread === undefined) {
         return "Not sent: no thread is waiting on a human; pass a thread id.";
       }

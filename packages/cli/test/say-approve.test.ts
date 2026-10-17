@@ -231,6 +231,46 @@ test("an MCP session at the chain limit can send again after approve", async () 
   ).resolves.toBeDefined();
 });
 
+test("the hard ceiling ignores a peer's human approves and lifts on this user's approve", async () => {
+  await setup();
+  const session = createRoomSession({
+    roomId,
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(session);
+  const deadline = Date.now() + 5000;
+  const until = async (cond: () => boolean) => {
+    while (!cond()) {
+      if (Date.now() > deadline) throw new Error("timed out");
+      await new Promise((r) => setTimeout(r, 5));
+    }
+  };
+  await until(() => session.status().connection === "live");
+  const thread = (await session.send({ kind: "fyi", body: "0" })).id;
+  for (let i = 1; i < 9; i++) {
+    // A peer posts a human-tagged approve: it resets the soft limit only.
+    await agentPost({
+      from: { member: "bob", agent: "human", via: "cli" },
+      kind: "approve",
+      thread,
+      body: "",
+    });
+    await until(() => session.status().roomAgentRun.count === 0);
+    await session.send({ kind: "fyi", body: String(i), thread });
+  }
+  await expect(
+    session.send({ kind: "fyi", body: "9", thread }),
+  ).rejects.toThrow(
+    "A human message posted by another member cannot lift this.",
+  );
+  expect(await main(["approve", thread], tty().ctx)).toBe(0);
+  await until(() => session.status().sinceYourLastPost.room.count === 0);
+  await expect(
+    session.send({ kind: "fyi", body: "9", thread }),
+  ).resolves.toBeDefined();
+});
+
 test("say against a relay that forgot the room removes local state", async () => {
   await setup();
   await relay.close();

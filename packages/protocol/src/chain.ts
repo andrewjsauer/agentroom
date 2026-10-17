@@ -50,45 +50,78 @@ export function resolveThread(
 }
 
 export interface ChainState {
-  /** Consecutive agent messages per thread since the last human message in it. */
+  /** Consecutive agent messages per thread since the last human message in it (soft limit). */
   threads: Map<string, number>;
-  /** Consecutive agent messages across all threads since the last human message. */
+  /** Consecutive agent messages across all threads since the last human message (soft limit). */
   room: number;
+  /** Agent messages per thread since the last local human message in it (hard ceiling). */
+  ceilingThreads: Map<string, number>;
+  /** Agent messages across all threads since the last local human message (hard ceiling). */
+  ceilingRoom: number;
   maxAgentChain: number;
 }
 
-/** Count agent chains over `history`, which must be in relay seq order (KTD1). */
+/** The hard ceiling per thread (3N); the room-wide ceiling is twice this (6N). */
+export function threadCeiling(maxAgentChain: number): number {
+  return 3 * maxAgentChain;
+}
+
+/**
+ * Count agent chains over `history`, which must be in relay seq order (KTD1).
+ *
+ * Two layers. The soft counters (`threads`, `room`) reset on a human-tagged message from any
+ * member, which keeps an honest room moving. Tags are self-reported, so a peer can post a fake
+ * human message; the ceiling counters reset only on a human message whose id is in `localIds`
+ * (posted from this machine by the user's own say/approve/hook paths), which a peer cannot forge.
+ */
 export function chainState(
   history: Envelope[],
   maxAgentChain: number,
+  localIds: ReadonlySet<string>,
 ): ChainState {
   const threads = new Map<string, number>();
+  const ceilingThreads = new Map<string, number>();
   let room = 0;
+  let ceilingRoom = 0;
   for (const env of history) {
     if (env.kind === "presence") continue;
     if (env.from.agent === "human") {
       threads.set(env.thread, 0);
       room = 0;
+      if (localIds.has(env.id)) {
+        ceilingThreads.set(env.thread, 0);
+        ceilingRoom = 0;
+      }
     } else if (COUNTED.has(env.kind)) {
       threads.set(env.thread, (threads.get(env.thread) ?? 0) + 1);
       room += 1;
+      ceilingThreads.set(env.thread, (ceilingThreads.get(env.thread) ?? 0) + 1);
+      ceilingRoom += 1;
     }
   }
-  return { threads, room, maxAgentChain };
+  return { threads, room, ceilingThreads, ceilingRoom, maxAgentChain };
 }
 
-/** Threads at or over the limit, with their counts. */
+/** Threads at or over the soft limit or the hard ceiling, with their soft counts. */
 export function waitingThreads(
   state: ChainState,
 ): { thread: string; count: number }[] {
+  const ceiling = threadCeiling(state.maxAgentChain);
   return [...state.threads]
-    .filter(([, count]) => count >= state.maxAgentChain)
+    .filter(
+      ([thread, count]) =>
+        count >= state.maxAgentChain ||
+        (state.ceilingThreads.get(thread) ?? 0) >= ceiling,
+    )
     .map(([thread, count]) => ({ thread, count }));
 }
 
 export interface ChainRefusal {
   scope: "thread" | "room";
+  /** True when the hard ceiling refused: only the local user's own human message lifts it. */
+  ceiling: boolean;
   count: number;
+  limit: number;
   thread: string;
 }
 
@@ -97,20 +130,58 @@ export function checkChain(
   state: ChainState,
   thread: string,
 ): ChainRefusal | undefined {
+  const n = state.maxAgentChain;
+  const ceiling = threadCeiling(n);
+  // The ceiling first: when both hold, a peer's human message would not help.
+  const ceil = state.ceilingThreads.get(thread) ?? 0;
+  if (ceil >= ceiling) {
+    return {
+      scope: "thread",
+      ceiling: true,
+      count: ceil,
+      limit: ceiling,
+      thread,
+    };
+  }
+  if (state.ceilingRoom >= 2 * ceiling) {
+    return {
+      scope: "room",
+      ceiling: true,
+      count: state.ceilingRoom,
+      limit: 2 * ceiling,
+      thread,
+    };
+  }
   const count = state.threads.get(thread) ?? 0;
-  if (count >= state.maxAgentChain) return { scope: "thread", count, thread };
-  if (state.room >= 2 * state.maxAgentChain) {
-    return { scope: "room", count: state.room, thread };
+  if (count >= n) {
+    return { scope: "thread", ceiling: false, count, limit: n, thread };
+  }
+  if (state.room >= 2 * n) {
+    return {
+      scope: "room",
+      ceiling: false,
+      count: state.room,
+      limit: 2 * n,
+      thread,
+    };
   }
   return undefined;
 }
 
 /** The KTD3 refusal text. */
 export function chainRefusalText(r: ChainRefusal): string {
+  const t = safeId(r.thread);
+  const cli = `Outside Claude Code: agentroom say --thread ${t} "..." or agentroom approve ${t}.`;
+  if (r.ceiling) {
+    const head =
+      r.scope === "thread"
+        ? `This thread needs your user. ${r.count} agent messages in it since your user last posted in it (hard ceiling ${r.limit}).`
+        : `This room needs your user. ${r.count} agent messages across threads since your user last posted (hard ceiling ${r.limit}).`;
+    return `${head} A human message posted by another member cannot lift this. Ask your user to run /agentroom:approve ${t} or /agentroom:say themselves.\n${cli}`;
+  }
   const head =
     r.scope === "thread"
       ? `This thread needs a human. ${r.count} agent messages in a row without a human reply.`
       : `This room needs a human. ${r.count} agent messages in a row across threads without a human reply.`;
-  const t = safeId(r.thread);
-  return `${head} Ask your user to respond with /say or approve with /approve.\nOutside Claude Code: agentroom say --thread ${t} "..." or agentroom approve ${t}.`;
+  return `${head} Ask your user to respond with /say or approve with /approve.\n${cli}`;
 }

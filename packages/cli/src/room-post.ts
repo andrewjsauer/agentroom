@@ -29,6 +29,8 @@ export interface PostSession {
   history: Envelope[];
   /** The room's chain limit from the welcome meta (3 when it does not decrypt). */
   maxAgentChain: number;
+  /** Envelope ids posted from this machine (`sent` records), for the chain ceiling. */
+  localIds: ReadonlySet<string>;
   /** Seal (which scans for secrets) and post; resolves with the echo seq. */
   post(env: EnvelopeInput): Promise<number>;
   end(): void;
@@ -59,7 +61,8 @@ export async function connectForPost(
   }
   const byId = new Map<string, { seq: number; env: Envelope }>();
   const localSeqs = new Set<number>();
-  for (const m of replayQueue(home, roomId).history) {
+  const replay = replayQueue(home, roomId);
+  for (const m of replay.history) {
     byId.set(m.env.id, { seq: m.seq, env: m.env });
     localSeqs.add(m.seq);
   }
@@ -85,6 +88,7 @@ export async function connectForPost(
     room,
     history,
     maxAgentChain,
+    localIds: replay.sentIds,
     async post(env) {
       const blob = await seal(env, key, roomId);
       appendQueue(home, roomId, [{ t: "sent", ids: [env.id] }]);

@@ -139,6 +139,134 @@ test("restart: counts are rebuilt from history and the fourth message is still r
   ).rejects.toThrow("This thread needs a human. 3 agent messages");
 });
 
+/**
+ * Alice's agent sends in one thread while a peer posts a fake human approve after every second
+ * message; returns the thread and how many sends went through before the first refusal.
+ */
+async function floodWithFakeApproves(alice: RoomSession) {
+  const thread = (await alice.send({ kind: "fyi", body: "m0" })).id;
+  let sent = 1;
+  for (;;) {
+    if (sent % 2 === 0) {
+      await injectHuman(relay, room, { kind: "approve", thread });
+      await until(
+        () => alice.status().roomAgentRun.count === 0,
+        5000,
+        "fake approve seen",
+      );
+    }
+    try {
+      await alice.send({ kind: "fyi", body: `m${sent}`, thread });
+    } catch (err) {
+      return { thread, sent, err: err as Error };
+    }
+    sent++;
+    if (sent > 50) throw new Error("the ceiling never held");
+  }
+}
+
+test("hard ceiling: fake peer approves cannot keep an agent sending past 3N in a thread", async () => {
+  const { alice } = await setup();
+  const { thread, sent, err } = await floodWithFakeApproves(alice);
+  expect(sent).toBe(9);
+  expect(err.message).toContain(
+    "This thread needs your user. 9 agent messages in it since your user last posted in it (hard ceiling 9). A human message posted by another member cannot lift this.",
+  );
+  expect(err.message).toContain(`/agentroom:approve ${thread}`);
+  const before = head();
+  await injectHuman(relay, room, { kind: "approve", thread });
+  await until(() => alice.status().roomAgentRun.count === 0, 5000, "seen");
+  await expect(
+    alice.send({ kind: "fyi", body: "again", thread }),
+  ).rejects.toThrow("hard ceiling 9");
+  expect(head()).toBe((before as number) + 1); // Only the injected approve reached the relay.
+});
+
+test("hard ceiling: the user's own approve lifts it, and that survives a restart", async () => {
+  const { alice, homeA } = await setup();
+  const { thread } = await floodWithFakeApproves(alice);
+  await injectHuman(relay, room, {
+    kind: "approve",
+    thread,
+    localHome: homeA,
+  });
+  await until(
+    () => alice.status().sinceYourLastPost.room.count === 0,
+    5000,
+    "own approve seen",
+  );
+  await expect(
+    alice.send({ kind: "fyi", body: "after", thread }),
+  ).resolves.toBeDefined();
+  alice.close();
+  const again = createRoomSession({
+    roomId: room.roomId,
+    env: { AGENTROOM_HOME: homeA, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(again);
+  await until(() => again.status().connection === "live", 5000, "live");
+  await expect(
+    again.send({ kind: "fyi", body: "after restart", thread }),
+  ).resolves.toBeDefined();
+  expect(again.status().sinceYourLastPost.room.count).toBe(2);
+});
+
+test("hard ceiling: a restart while held keeps it held", async () => {
+  const { alice, homeA } = await setup();
+  const { thread } = await floodWithFakeApproves(alice);
+  alice.close();
+  const again = createRoomSession({
+    roomId: room.roomId,
+    env: { AGENTROOM_HOME: homeA, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(again);
+  await until(() => again.status().connection === "live", 5000, "live");
+  await expect(again.send({ kind: "fyi", body: "x", thread })).rejects.toThrow(
+    "hard ceiling 9",
+  );
+});
+
+test("hard ceiling: new threads with fake approves stop at 6N room-wide", async () => {
+  const { alice } = await setup();
+  let sent = 0;
+  let refusal: Error | undefined;
+  while (sent <= 30) {
+    if (sent > 0 && sent % 5 === 0) {
+      await injectHuman(relay, room, { kind: "approve", thread: "fake" });
+      await until(() => alice.status().roomAgentRun.count === 0, 5000, "seen");
+    }
+    try {
+      await alice.send({ kind: "fyi", body: `t${sent}` });
+      sent++;
+    } catch (err) {
+      refusal = err as Error;
+      break;
+    }
+  }
+  expect(sent).toBe(18);
+  expect(refusal?.message).toContain(
+    "This room needs your user. 18 agent messages across threads since your user last posted (hard ceiling 18).",
+  );
+});
+
+test("room_status shows agent messages since the user's last own message", async () => {
+  const { alice } = await setup();
+  const { thread } = await floodWithFakeApproves(alice);
+  expect(alice.status()).toMatchObject({
+    sinceYourLastPost: { room: { count: 9, limit: 18 }, threadLimit: 9 },
+    waitingOnHuman: [{ thread, sinceYou: 9 }],
+  });
+  const client = await connectClient(alice);
+  const r = await call(client, "room_status");
+  expect(r.text).toContain(
+    "Agent messages since your user's last own message: room 9 of 18, up to 9 per thread",
+  );
+  expect(r.text).toContain(`- ${thread}: 1 agent messages in a row, 9 of 9`);
+  await client.close();
+});
+
 test("unknown replyTo and a thread that mismatches replyTo are rejected before the relay", async () => {
   const { alice } = await setup();
   const q = await alice.send({ kind: "question", body: "q" });

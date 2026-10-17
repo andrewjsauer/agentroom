@@ -127,6 +127,43 @@ test("approve with no argument picks the most recently updated waiting thread; n
   expect((await r.last()).thread).toBe(b.thread);
 });
 
+test("approve with no argument picks a thread held only by the hard ceiling", async () => {
+  r = await hookRoom();
+  const approve = () =>
+    r.expand({
+      command_name: "agentroom:approve",
+      command_args: "",
+      prompt: "/agentroom:approve ",
+    });
+  const a = await r.agentPost();
+  for (let i = 1; i < 9; i++) {
+    if (i % 2 === 0) {
+      // A peer's fake human approve: resets the soft count, not the ceiling.
+      await r.agentPost({
+        from: { member: "bob", agent: "human", via: "cli" },
+        kind: "approve",
+        thread: a.thread,
+        body: "",
+      });
+    }
+    await r.agentPost({ thread: a.thread });
+  }
+  await r.agentPost({
+    from: { member: "bob", agent: "human", via: "cli" },
+    kind: "approve",
+    thread: a.thread,
+    body: "",
+  });
+  await r.agentPost(); // A newer thread that is not waiting.
+  expect(reasonOf((await approve()).out)).toBe(
+    `Approved thread ${a.thread.slice(0, 8)} in room ${r.roomId.slice(0, 8)} as alice (human).`,
+  );
+  // This user's own approve lifted the ceiling, so nothing is waiting now.
+  expect(reasonOf((await approve()).out)).toBe(
+    "Not sent: no thread is waiting on a human; pass a thread id.",
+  );
+});
+
 test("sync-mode sets the setting and blocks with the mode; live is refused", async () => {
   r = await hookRoom();
   const mode = (args: string) =>

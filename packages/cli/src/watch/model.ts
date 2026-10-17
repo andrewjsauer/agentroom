@@ -44,6 +44,7 @@ export function threads(model: WatchModel): WatchThread[] {
   const chain = chainState(
     model.messages.map((m) => m.env),
     model.maxAgentChain,
+    new Set(), // The pane shows only the soft limit, which ignores who posted.
   );
   const byId = new Map<string, WatchThread>();
   for (const { seq, env } of model.messages) {
