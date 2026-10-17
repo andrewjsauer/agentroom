@@ -14,6 +14,7 @@ import {
 } from "@agentroom/protocol";
 import { type CliContext, CliError, parseAgent } from "../context.js";
 import { DEFAULT_RELAY, resolveRelay } from "../relay-url.js";
+import { stripTerminal } from "../safe-text.js";
 import { afterRoomReady } from "./install.js";
 
 export function defaultMember(): string {
@@ -81,7 +82,7 @@ export async function up(
   });
   if (res.t === "error") {
     throw new CliError(
-      `relay refused to create the room: ${res.code} (${res.message})`,
+      `relay refused to create the room: ${res.code} (${stripTerminal(res.message)})`,
     );
   }
 

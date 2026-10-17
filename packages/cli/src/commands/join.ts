@@ -16,6 +16,7 @@ import {
 } from "@agentroom/protocol";
 import { type CliContext, CliError, parseAgent } from "../context.js";
 import { resolveRelay } from "../relay-url.js";
+import { stripTerminal } from "../safe-text.js";
 import { afterRoomReady } from "./install.js";
 import { defaultMember, hoursUntil } from "./up.js";
 
@@ -67,7 +68,9 @@ export async function join(
         `room not found on ${relay}: it expired, was closed, or the relay restarted. Check --relay if the creator used a different one.`,
       );
     }
-    throw new CliError(`relay refused the join: ${res.code} (${res.message})`);
+    throw new CliError(
+      `relay refused the join: ${res.code} (${stripTerminal(res.message)})`,
+    );
   }
   await openMeta(res.meta, key, roomId);
 
