@@ -4,6 +4,7 @@ import {
   isoTime,
   Ref,
   refText,
+  stripControl,
 } from "@agentroom/protocol";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -112,10 +113,16 @@ function renderStatus(s: RoomStatus): string {
   return lines.join("\n");
 }
 
-/** The agent's own draft as plain text, with the release hash (KTD16). */
+/** Strip control characters and cap length, as chain refusals do for ids. */
+const safeId = (id: string) => stripControl(id).slice(0, 64);
+
+/**
+ * The agent's own draft as plain text, with the release hash (KTD16). The thread id can come
+ * from a peer's message (a reply inherits it), so it is shown through `safeId`.
+ */
 function renderDraft(env: Envelope, hash: string): string {
   const lines = [
-    `Draft ${hash} (not sent): ${env.kind} in thread ${env.thread}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
+    `Draft ${hash} (not sent): ${env.kind} in thread ${safeId(env.thread)}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
     env.body,
     ...env.refs.map((r) => `refs: ${refText(r)}`),
     `Nothing was posted. Show this draft to your user verbatim; they release it by typing /agentroom:send ${hash} in Claude Code.`,
