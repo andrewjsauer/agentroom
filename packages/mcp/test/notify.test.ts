@@ -137,7 +137,7 @@ describe("session notifications", () => {
     await relay.close();
   });
 
-  const start = async (h: string) => {
+  const start = async (h: string, notifyIntervalMs = 300) => {
     writeRoomFile(h, {
       v: 1,
       roomId: room.roomId,
@@ -152,6 +152,7 @@ describe("session notifications", () => {
       roomId: room.roomId,
       env: { AGENTROOM_HOME: h },
       notify: (title, text) => got.push([title, text]),
+      notifyIntervalMs,
     });
     sessions.push(s);
     await until(() => s.status().connection === "live");
@@ -202,12 +203,40 @@ describe("session notifications", () => {
     });
     await until(() => (relay.snapshot(room.roomId)?.seq ?? 0) >= 8);
     await until(() => s.status().unread === 5);
-    await sleep(50);
+    await until(() => got.length === 2);
+    await sleep(400);
+    // The first notifies at once; the other two coalesce into the next slot.
     expect(got).toEqual([
       ["agentroom: bob needs you", "hello"],
-      ["agentroom: question for you from bob", "hello"],
-      ["agentroom: alice needs you", "hello"],
+      ["agentroom: 2 new messages need you", "hello"],
     ]);
+  });
+
+  test("a flood raises at most one notification per interval, coalescing the rest", async () => {
+    const h = home();
+    const s = await start(h, 1_000);
+    for (let i = 0; i < 20; i++) {
+      await inject({ requiresHuman: true, body: `m${i}` });
+    }
+    await until(() => s.status().unread === 20);
+    await sleep(100);
+    await until(() => got.length === 2, 5000);
+    await sleep(1_200);
+    expect(got).toHaveLength(2);
+    expect(got[0]).toEqual(["agentroom: bob needs you", "m0"]);
+    expect(got[1]).toEqual(["agentroom: 19 new messages need you", "m19"]);
+  });
+
+  test("the interval holds across sessions on one room", async () => {
+    const h = home();
+    const a = await start(h, 60_000);
+    const b = await start(h, 60_000);
+    await inject({ requiresHuman: true, body: "first" });
+    await until(() => a.status().unread === 1 && b.status().unread === 1);
+    await inject({ requiresHuman: true, body: "second" });
+    await until(() => a.status().unread === 2 && b.status().unread === 2);
+    await sleep(100);
+    expect(got).toEqual([["agentroom: bob needs you", "first"]]);
   });
 
   test("two sessions on one room notify once and leave a claim file", async () => {

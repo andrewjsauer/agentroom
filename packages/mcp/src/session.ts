@@ -1,5 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   assertNoSecrets,
@@ -23,7 +29,11 @@ import {
   ulid,
   waitingThreads,
 } from "@agentroom/protocol";
-import { createNotifier, type Notifier, notificationText } from "./notify.js";
+import {
+  batchNotificationText,
+  createNotifier,
+  type Notifier,
+} from "./notify.js";
 import { agentroomHome, roomDir } from "./paths.js";
 import { writePending } from "./pending.js";
 import {
@@ -63,6 +73,8 @@ const DEFAULT_LIMIT = 20;
 const MAX_NAME_CHARS = 64;
 const DEFAULT_MAX_AGENT_CHAIN = 3;
 const EXTERNAL_READ_MS = 2_000;
+/** At most one desktop notification per room in this window (KTD16). */
+const NOTIFY_INTERVAL_MS = 10_000;
 const ROOM_NAME_CHARS = 32;
 const RECENT_THREADS = 10;
 const PREVIEW_CHARS = 80;
@@ -195,6 +207,8 @@ export function createRoomSession(opts: {
   externalReadMs?: number;
   /** Desktop notifier; defaults to the platform's (KTD16). */
   notify?: Notifier;
+  /** Minimum time between notifications for this room; 10 s by default. */
+  notifyIntervalMs?: number;
 }): RoomSession {
   const home = agentroomHome(opts.env);
   const roomId = opts.roomId;
@@ -245,6 +259,10 @@ export function createRoomSession(opts: {
   let closed = false;
   let finalReadDone = false;
   let presenceSent = false;
+  /** Claimed needs-you messages waiting for the next notification slot. */
+  let toNotify: Envelope[] = [];
+  let notifyTimer: NodeJS.Timeout | undefined;
+  const notifyIntervalMs = opts.notifyIntervalMs ?? NOTIFY_INTERVAL_MS;
   const pendingEcho = new Map<
     string,
     { resolve(seq: number): void; reject(err: Error): void }
@@ -442,8 +460,39 @@ export function createRoomSession(opts: {
   };
 
   /**
+   * Raise one notification for everything claimed since the last one, at most once per
+   * `notifyIntervalMs` per room. `<room>/notify-last` carries the time across sessions; when
+   * another session notified within the interval, the batch waits for the next slot.
+   */
+  const flushNotify = () => {
+    notifyTimer = undefined;
+    if (toNotify.length === 0 || gone || closed) return;
+    const last = join(roomDir(home, roomId), "notify-last");
+    let wait = 0;
+    try {
+      wait = statSync(last).mtimeMs + notifyIntervalMs - Date.now();
+    } catch {
+      // Never notified in this room.
+    }
+    if (wait > 0) {
+      notifyTimer = setTimeout(flushNotify, Math.min(wait, notifyIntervalMs));
+      notifyTimer.unref();
+      return;
+    }
+    try {
+      writeFileSync(last, "", { mode: 0o600 });
+    } catch {
+      return; // The room dir is gone.
+    }
+    const { title, text } = batchNotificationText(toNotify);
+    toNotify = [];
+    notifier(title, text);
+  };
+
+  /**
    * Notify for a live message from elsewhere that needs this member, once per room across
-   * processes: whoever creates `<room>/notified/<hash of id>` first raises it (KTD16).
+   * processes: whoever creates `<room>/notified/<hash of id>` first claims it (KTD16). Claimed
+   * messages are coalesced into at most one notification per interval.
    */
   const maybeNotify = (seq: number, env: Envelope) => {
     if (liveAfter === undefined || seq <= liveAfter) return;
@@ -456,8 +505,8 @@ export function createRoomSession(opts: {
     } catch {
       return; // Claimed by another session, or the room dir is gone.
     }
-    const { title, text } = notificationText(env);
-    notifier(title, text);
+    toNotify.push(env);
+    if (notifyTimer === undefined) flushNotify();
   };
 
   /** The single seal path for outbound envelopes. Refuses a human tag (invariant 2). */
@@ -548,6 +597,7 @@ export function createRoomSession(opts: {
   const onGone = (code: GoneCode) => {
     gone = true;
     clearInterval(externalTimer);
+    clearTimeout(notifyTimer);
     goneCode = code;
     client.stop();
     deleteRoomDir(home, roomId);
@@ -787,6 +837,7 @@ export function createRoomSession(opts: {
     close() {
       closed = true;
       clearInterval(externalTimer);
+      clearTimeout(notifyTimer);
       client.stop();
       settleCatchUp(true);
       for (const p of pendingEcho.values()) {
