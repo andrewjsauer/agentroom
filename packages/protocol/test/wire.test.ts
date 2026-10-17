@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { ClientFrame, RelayFrame } from "../src/index.js";
+import {
+  ClientFrame,
+  PING_FRAME,
+  PONG_FRAME,
+  RelayFrame,
+} from "../src/index.js";
 
 const room = "a".repeat(64);
 
@@ -15,6 +20,7 @@ describe("ClientFrame", () => {
     },
     { t: "put", blob: "AAAA" },
     { t: "close", sig: "c2ln" },
+    JSON.parse(PING_FRAME),
   ])("parses %j", (frame) => {
     expect(ClientFrame.parse(frame)).toEqual(frame);
   });
@@ -48,9 +54,19 @@ describe("RelayFrame", () => {
       nonce: "n",
       meta: "m",
     },
+    {
+      t: "welcome",
+      seq: 0,
+      members: 1,
+      expiresAt: 1,
+      nonce: "n",
+      meta: "m",
+      ping: 30_000,
+    },
     { t: "msg", seq: 1, blob: "AAAA" },
     { t: "presence", members: 2 },
     { t: "closed" },
+    JSON.parse(PONG_FRAME),
     { t: "error", code: "room_not_found", message: "gone" },
   ])("parses %j", (frame) => {
     expect(RelayFrame.parse(frame)).toEqual(frame);

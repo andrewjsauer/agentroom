@@ -1,6 +1,9 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   deriveRoom,
   generateCloseKeyPair,
+  PING_FRAME,
   type RelayFrame,
   seal,
   signClose,
@@ -371,14 +374,18 @@ describe("close", () => {
     await c.closed;
   });
 
-  test("a third close-only connection evicts the oldest with room_full", async () => {
-    await start();
+  test("close-only connections never evict each other; the per-address cap refuses more", async () => {
+    await start({ maxRoomConnsPerIp: 4 });
     await createRoom();
     const first = await closeOnly();
     await closeOnly();
     await closeOnly();
-    expect(await first.c.next()).toMatchObject({ code: "room_full" });
-    await first.c.closed;
+    const c = await connect();
+    c.send({ t: "hello", room: ROOM, proto: 1, closeOnly: true });
+    expect(await c.next()).toMatchObject({ code: "room_full" });
+    await c.closed;
+    expect(first.c.frames).toEqual([]);
+    expect(first.c.ws.readyState).toBe(WebSocket.OPEN);
   });
 
   test("an idle close-only connection is closed after the grace period", async () => {
@@ -444,7 +451,7 @@ describe("max age, rate limit, cap", () => {
     expect(relay.snapshot(ROOM)).toBeUndefined();
   });
 
-  test("rate limit refuses without closing, is per connection, and refills", async () => {
+  test("rate limit refuses without closing, is per address, survives reconnects, and refills", async () => {
     await start({ rateLimit: { burst: 3, perSec: 1 } });
     const { c: a } = await createRoom();
     const { c: b } = await joinRoom();
@@ -458,10 +465,16 @@ describe("max age, rate limit, cap", () => {
     expect(await a.next()).toMatchObject({ code: "rate_limited" });
     expect(relay.snapshot(ROOM)?.seq).toBe(3);
     b.send({ t: "put", blob: "CCCC" });
-    expect(await a.next()).toMatchObject({ t: "msg", seq: 4 });
+    expect(await b.next()).toMatchObject({ code: "rate_limited" });
+    const { c: fresh } = await joinRoom();
+    fresh.send({ t: "put", blob: "CCCC" });
+    expect(await fresh.next()).toMatchObject({ code: "rate_limited" });
+    expect(relay.snapshot(ROOM)?.seq).toBe(3);
     clock += 1_000;
     a.send({ t: "put", blob: "DDDD" });
-    expect(await a.next()).toMatchObject({ t: "msg", seq: 5 });
+    let f = await a.next();
+    while (f.t === "presence") f = await a.next();
+    expect(f).toMatchObject({ t: "msg", seq: 4 });
   });
 
   test("a join over maxMembers gets room_full; after a leave it succeeds", async () => {
@@ -558,4 +571,157 @@ test("setAccepting, disconnectAll and inject", async () => {
   const { c: b } = await joinRoom();
   relay.inject(ROOM, "QUFB");
   expect(await b.next()).toEqual({ t: "msg", seq: 1, blob: "QUFB" });
+});
+
+describe("relay-wide caps and memory", () => {
+  const refusedStatus = (url: string) =>
+    new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(url);
+      open.push(ws);
+      ws.once("unexpected-response", (_req, res) =>
+        resolve(res.statusCode ?? 0),
+      );
+      ws.once("open", () => reject(new Error("upgrade was accepted")));
+      ws.once("error", () => {});
+    });
+
+  test("connections per address and in total are capped at the upgrade", async () => {
+    await start({ maxConnsPerIp: 2 });
+    const a = await connect();
+    await connect();
+    expect(await refusedStatus(relay.url)).toBe(429);
+    a.ws.close();
+    await a.closed;
+    await connect();
+    await relay.close();
+    await start({ maxConns: 1 });
+    await connect();
+    expect(await refusedStatus(relay.url)).toBe(503);
+  });
+
+  test("a create past maxRooms is room_full", async () => {
+    await start({ maxRooms: 1 });
+    await createRoom();
+    const { welcome } = await createRoom("b".repeat(64));
+    expect(welcome).toMatchObject({ t: "error", code: "room_full" });
+    expect(relay.snapshot("b".repeat(64))).toBeUndefined();
+  });
+
+  test("the buffered-bytes budget refuses puts and creates once spent", async () => {
+    // meta "META" + close key "pk" = 6, plus a 94-character blob = 100.
+    await start({ maxBufferedBytes: 100 });
+    const { c } = await createRoom();
+    c.send({ t: "put", blob: "A".repeat(94) });
+    expect(await c.next()).toMatchObject({ t: "msg", seq: 1 });
+    c.send({ t: "put", blob: "AAAA" });
+    expect(await c.next()).toMatchObject({ code: "rate_limited" });
+    const { welcome } = await createRoom("b".repeat(64));
+    expect(welcome).toMatchObject({ t: "error", code: "room_full" });
+  });
+
+  test("a member that stops reading is terminated once its unsent output passes the cap", async () => {
+    await start({ maxSendBufferBytes: 64 * 1024 });
+    const { c } = await createRoom();
+    (c.ws as unknown as { _socket: { pause(): void } })._socket.pause();
+    const blob = "A".repeat(60_000);
+    await until(async () => {
+      relay.inject(ROOM, blob);
+      await new Promise((r) => setTimeout(r, 1));
+      return events.some((e) => e.event === "conn_close");
+    });
+    expect(events).toContainEqual({
+      event: "conn_close",
+      room: ROOM,
+      members: 0,
+    });
+  });
+
+  test("since replay respects backpressure, keeps order, and includes puts made meanwhile", async () => {
+    await start({ maxSendBufferBytes: 64 * 1024, bufferSize: 100 });
+    await createRoom();
+    for (let i = 0; i < 60; i++) relay.inject(ROOM, "B".repeat(30_000));
+    const c = await connect();
+    c.send({ t: "hello", room: ROOM, proto: 1, since: 0 });
+    relay.inject(ROOM, "QUFB");
+    expect((await c.next()).t).toBe("welcome");
+    const seqs: number[] = [];
+    while (seqs.length < 61) {
+      const f = await c.next();
+      if (f.t === "msg") seqs.push(f.seq);
+    }
+    expect(seqs).toEqual(Array.from({ length: 61 }, (_, i) => i + 1));
+    expect(c.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("a room with no member for emptyRoomTtlSec is dropped; one with a member stays", async () => {
+    await start({ emptyRoomTtlSec: 60, sweepIntervalMs: 10 });
+    // Not ROOM: earlier tests' late close events can land in `events`.
+    const empty = "c".repeat(64);
+    const { c } = await createRoom(empty);
+    await createRoom();
+    c.ws.close();
+    await until(() =>
+      events.some((e) => e.event === "conn_close" && e.room === empty),
+    );
+    clock += 59_999;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(relay.snapshot(empty)).toBeDefined();
+    clock += 1;
+    await until(() => relay.snapshot(empty) === undefined);
+    expect(events).toContainEqual({ event: "room_expired", room: empty });
+    const again = await connect();
+    again.send({ t: "hello", room: empty, proto: 1 });
+    expect(await again.next()).toMatchObject({ code: "room_expired" });
+    expect(relay.snapshot(ROOM)).toBeDefined();
+  });
+});
+
+test("the bin exits 2 and names the variable when a limit is not a positive integer", () => {
+  const bin = fileURLToPath(new URL("../dist/bin.js", import.meta.url));
+  for (const [name, value] of <[string, string][]>[
+    ["BUFFER_SIZE", "1.5"],
+    ["MAX_CONNS_PER_IP", "abc"],
+    ["RATE_PER_SEC", "0"],
+  ]) {
+    const run = spawnSync(process.execPath, [bin], {
+      env: { ...process.env, PORT: "0", [name]: value },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain(
+      `${name} must be a positive integer, got "${value}"`,
+    );
+  }
+});
+
+describe("liveness", () => {
+  test("a connection that sends no hello is told and closed after helloTimeoutMs", async () => {
+    await start({ helloTimeoutMs: 30 });
+    const c = await connect();
+    expect(await c.next()).toMatchObject({ t: "error", code: "bad_proto" });
+    await c.closed;
+    const { c: ok } = await createRoom();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(ok.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("a peer that stops answering protocol pings is terminated; one that answers stays", async () => {
+    await start({ pingIntervalMs: 30 });
+    const { c: live } = await createRoom();
+    const deaf = new WebSocket(relay.url, { autoPong: false });
+    open.push(deaf);
+    await new Promise((r) => deaf.once("open", r));
+    deaf.send(JSON.stringify({ t: "hello", room: ROOM, proto: 1 }));
+    await new Promise((r) => deaf.once("close", r));
+    expect(live.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("welcome asks for pings; a ping frame gets a pong", async () => {
+    await start({ pingIntervalMs: 45_000 });
+    const { c, welcome } = await createRoom();
+    expect(welcome).toMatchObject({ t: "welcome", ping: 45_000 });
+    c.ws.send(PING_FRAME);
+    expect(await c.next()).toEqual({ t: "pong" });
+  });
 });

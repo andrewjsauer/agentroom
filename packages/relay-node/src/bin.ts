@@ -1,18 +1,15 @@
 #!/usr/bin/env node
+import { positiveInt } from "@agentroom/protocol/relay-core";
 import { startRelay } from "./relay.js";
 
-/** A positive number from the environment, or undefined for the relay default. */
+/** A positive integer from the environment, or undefined for the relay default; exits on junk. */
 function num(name: string): number | undefined {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    process.stderr.write(
-      `agentroom relay: ${name} must be a positive number\n`,
-    );
+  try {
+    return positiveInt(name, process.env[name]);
+  } catch (err) {
+    process.stderr.write(`agentroom relay: ${(err as Error).message}\n`);
     process.exit(2);
   }
-  return n;
 }
 
 const burst = num("RATE_BURST");
@@ -24,12 +21,20 @@ const relay = await startRelay({
   maxAgeSec: num("MAX_AGE_SEC"),
   bufferSize: num("BUFFER_SIZE"),
   maxMembers: num("MAX_MEMBERS"),
-  maxClosers: num("MAX_CLOSERS"),
+  maxRoomConnsPerIp: num("MAX_ROOM_CONNS_PER_IP"),
   rateLimit:
     burst !== undefined || perSec !== undefined
       ? { burst: burst ?? 20, perSec: perSec ?? 2 }
       : undefined,
   closeGraceMs: num("CLOSE_GRACE_MS"),
+  helloTimeoutMs: num("HELLO_TIMEOUT_MS"),
+  pingIntervalMs: num("PING_INTERVAL_MS"),
+  maxRooms: num("MAX_ROOMS"),
+  maxConns: num("MAX_CONNS"),
+  maxConnsPerIp: num("MAX_CONNS_PER_IP"),
+  maxBufferedBytes: num("MAX_BUFFERED_BYTES"),
+  maxSendBufferBytes: num("MAX_SEND_BUFFER_BYTES"),
+  emptyRoomTtlSec: num("EMPTY_ROOM_TTL_SEC"),
 });
 process.stderr.write(`agentroom relay listening on port ${relay.port}\n`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

@@ -257,7 +257,8 @@ test("a draft in a thread at the chain limit is released, and the approve lets t
 });
 
 test("a refused approve reports the partial result; the draft slot is cleared", async () => {
-  const { session } = await setup({ rateLimit: { burst: 1, perSec: 0.001 } });
+  // One bucket per address: the session's presence post and the draft use it up.
+  const { session } = await setup({ rateLimit: { burst: 2, perSec: 0.001 } });
   const { env, hash } = session.draft({ kind: "fyi", body: "x" });
   const reason = reasonOf((await send(hash)).out);
   expect(reason).toMatch(

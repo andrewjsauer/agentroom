@@ -21,6 +21,7 @@ describe.skipIf(CF_SKIP)(CF_TITLE, () => {
       cf = await startCfRelay({
         BUFFER_SIZE: String(SUITE_LIMITS.bufferSize),
         CLOSE_GRACE_MS: String(SUITE_LIMITS.closeGraceMs),
+        HELLO_TIMEOUT_MS: String(SUITE_LIMITS.helloTimeoutMs),
       });
       return cf;
     },

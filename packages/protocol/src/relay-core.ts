@@ -4,6 +4,8 @@
  */
 import { ClientFrame, type ErrorCode, type HelloFrame } from "./wire.js";
 
+export { PING_FRAME, PONG_FRAME } from "./wire.js";
+
 export interface RelayLimits {
   /** Ceiling for a room's idle TTL. */
   idleTtlSec: number;
@@ -13,13 +15,24 @@ export interface RelayLimits {
   maxEnvelopeBytes: number;
   /** Connections per room, close-only connections excepted. */
   maxMembers: number;
-  /** Close-only connections held per room; a new one evicts the oldest. */
-  maxClosers: number;
-  /** Token bucket on `put`, per connection. */
+  /**
+   * Connections one client address may hold in one room, members and close-only alike. This is
+   * the only bound on close-only connections, which never evict each other, so a room-id holder
+   * elsewhere cannot crowd out the creator's `down`.
+   */
+  maxRoomConnsPerIp: number;
+  /** Token bucket on `put`, per client address per room, so reconnecting does not refill it. */
   rateBurst: number;
   ratePerSec: number;
   /** How long a close-only connection may wait before sending `close`. */
   closeGraceMs: number;
+  /** How long a new connection may wait before sending `hello`. */
+  helloTimeoutMs: number;
+  /**
+   * Keepalive period: relay-node pings every connection this often and drops one that missed a
+   * pong; `welcome.ping` asks clients to send `{"t":"ping"}` at least this often.
+   */
+  pingIntervalMs: number;
 }
 
 export const DEFAULT_LIMITS: RelayLimits = {
@@ -28,14 +41,38 @@ export const DEFAULT_LIMITS: RelayLimits = {
   bufferSize: 500,
   maxEnvelopeBytes: 65_536,
   maxMembers: 8,
-  maxClosers: 2,
+  maxRoomConnsPerIp: 10,
   rateBurst: 20,
   ratePerSec: 2,
   closeGraceMs: 10_000,
+  helloTimeoutMs: 10_000,
+  pingIntervalMs: 30_000,
 };
+
+/**
+ * A limit from configuration text: undefined when unset or empty, otherwise a positive safe
+ * integer. Anything else throws, so a typo fails at startup instead of silently using a default.
+ */
+export function positiveInt(
+  name: string,
+  raw: string | undefined,
+): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(n)) {
+    throw new Error(`${name} must be a positive integer, got "${raw}"`);
+  }
+  return n;
+}
 
 /** Largest WebSocket frame a relay accepts. */
 export const MAX_FRAME_BYTES = 96 * 1024;
+
+/**
+ * Consecutive refused `put`s (`rate_limited`, `too_large`) after which the relay closes the
+ * connection. Serialized clients never get near it; a flooding one stops costing work.
+ */
+export const MAX_REFUSALS = 20;
 
 /** Structured relay event. Never carries a blob or meta (invariant 1). */
 export type RelayEvent =
@@ -81,13 +118,12 @@ export type HelloDecision =
       /** Set when this hello creates the room. */
       created?: RoomState;
       closeOnly: boolean;
-      /** A close-only hello at the closer cap evicts the oldest closer. */
-      evictCloser: boolean;
     };
 
 /**
  * Decide a `hello` against the room's live state (undefined when absent or expired), whether
- * its id is tombstoned, and the current connection counts.
+ * its id is tombstoned, the room's member count, and how many connections the sender's address
+ * already holds in the room (this one excluded).
  */
 export function decideHello(
   hello: HelloFrame,
@@ -95,7 +131,7 @@ export function decideHello(
     room: RoomState | undefined;
     tombstoned: boolean;
     members: number;
-    closers: number;
+    ipConns: number;
     now: number;
     limits: RelayLimits;
   },
@@ -130,12 +166,13 @@ export function decideHello(
   if (!closeOnly && members >= ctx.limits.maxMembers) {
     return refuse("room_full", "room is at its connection cap");
   }
-  return {
-    ok: true,
-    created,
-    closeOnly,
-    evictCloser: closeOnly && !created && ctx.closers >= ctx.limits.maxClosers,
-  };
+  if (!created && ctx.ipConns >= ctx.limits.maxRoomConnsPerIp) {
+    return refuse(
+      "room_full",
+      "too many connections from your address to this room",
+    );
+  }
+  return { ok: true, created, closeOnly };
 }
 
 /** A new room's state, with its TTLs capped by the relay limits. */
@@ -184,6 +221,24 @@ export function decodedLength(b64: string): number {
 export interface RateState {
   tokens: number;
   refilledAt: number;
+}
+
+/**
+ * The room's bucket for `key` (the client address), created full on first use. A new socket
+ * from the same address gets the existing bucket, so reconnecting does not reset the budget.
+ */
+export function rateFor(
+  rates: Map<string, RateState>,
+  key: string,
+  now: number,
+  limits: RelayLimits,
+): RateState {
+  let rate = rates.get(key);
+  if (!rate) {
+    rate = { tokens: limits.rateBurst, refilledAt: now };
+    rates.set(key, rate);
+  }
+  return rate;
 }
 
 /** Refill and spend one token, then check the envelope size. Mutates `rate`. */

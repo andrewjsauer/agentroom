@@ -453,9 +453,10 @@ test("a hostile root preview is escaped and stays inside the recent threads bloc
 
 test("rate-limited send fails fast with the rate-limit text", async () => {
   const frozen = Date.now();
+  // Both sessions post from 127.0.0.1 and share one bucket: two presence posts, then "one".
   const { alice } = await setup(
     {},
-    { now: () => frozen, rateLimit: { burst: 2, perSec: 1 } },
+    { now: () => frozen, rateLimit: { burst: 3, perSec: 1 } },
   );
   await expect(alice.send({ kind: "fyi", body: "one" })).resolves.toBeDefined();
   const started = Date.now();

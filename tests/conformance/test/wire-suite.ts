@@ -1,9 +1,17 @@
-import { generateCloseKeyPair, signClose } from "@agentroom/protocol";
+import {
+  generateCloseKeyPair,
+  PING_FRAME,
+  signClose,
+} from "@agentroom/protocol";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Conn, type Frame, newRoomId } from "./wire.js";
 
 /** Limits every runner starts its relay with; the rest are the relay defaults. */
-export const SUITE_LIMITS = { bufferSize: 5, closeGraceMs: 500 };
+export const SUITE_LIMITS = {
+  bufferSize: 5,
+  closeGraceMs: 500,
+  helloTimeoutMs: 1000,
+};
 
 export interface WireRelay {
   url: string;
@@ -56,6 +64,20 @@ export function defineWireSuite(
       return { c, welcome: await c.take("welcome") };
     };
     const blob = (n: number) => Buffer.alloc(n, 7).toString("base64");
+    /** A connection over a cap: refused at the upgrade (HTTP 429) or with `room_full` after hello. */
+    const expectRefused = async (
+      room: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const c = await Conn.open(relay.url, room).catch((e: Error) => e);
+      if (c instanceof Error) {
+        expect(c.message).toBe("HTTP 429");
+        return;
+      }
+      conns.push(c);
+      c.send({ t: "hello", room, proto: 1, ...extra });
+      expect((await c.take("error")).code).toBe("room_full");
+    };
 
     test("create, join, presence, sender echo, and since replay", async () => {
       const { room, c: a, welcome } = await create();
@@ -135,6 +157,29 @@ export function defineWireSuite(
       expect((await d.take("error")).code).toBe("bad_proto");
     });
 
+    test("a connection that never sends hello is closed after the hello timeout, pings or not", async () => {
+      const c = await open(newRoomId());
+      // Local workerd (wrangler's dev proxy) never finishes a server-initiated close on a socket
+      // the client has not written to yet, so the client writes a ping first.
+      c.send(PING_FRAME);
+      await c.take("pong");
+      expect((await c.take("error")).code).toBe("bad_proto");
+      await c.waitClosed(SUITE_LIMITS.helloTimeoutMs + 4000);
+    });
+
+    test("welcome asks for keepalive pings and a ping frame gets a pong", async () => {
+      const { c, welcome } = await create();
+      expect(welcome.ping).toBe(30_000);
+      c.send(PING_FRAME);
+      await c.take("pong");
+    });
+
+    test("an upgrade carrying an Origin header (a browser page) is HTTP 403", async () => {
+      await expect(
+        Conn.open(relay.url, newRoomId(), { Origin: "https://example.com" }),
+      ).rejects.toThrow("HTTP 403");
+    });
+
     test("rate limit: the put past the burst is refused and the connection stays open", async () => {
       const { c } = await create();
       for (let i = 0; i < 21; i++) c.send({ t: "put", blob: "AAAA" });
@@ -142,16 +187,70 @@ export function defineWireSuite(
       expect(c.closed).toBe(false);
     });
 
-    test("room cap: the ninth connection is room_full; closers are admitted and the oldest evicted", async () => {
+    test("20 refused puts in a row close the connection", async () => {
+      const { c } = await create();
+      const big = blob(65_537);
+      for (let i = 0; i < 25; i++) c.send({ t: "put", blob: big });
+      await c.waitClosed();
+      const errors = c.frames.filter((f: Frame) => f.t === "error");
+      expect(errors).toHaveLength(20);
+      expect(errors.every((f: Frame) => f.code === "too_large")).toBe(true);
+    });
+
+    test("rate limit: reconnecting from the same address does not reset the put budget", async () => {
+      const { room, c } = await create();
+      for (let i = 0; i < 21; i++) c.send({ t: "put", blob: "AAAA" });
+      expect((await c.take("error")).code).toBe("rate_limited");
+      c.close();
+      const { c: again } = await join(room);
+      for (let i = 0; i < 3; i++) again.send({ t: "put", blob: "AAAA" });
+      expect((await again.take("error")).code).toBe("rate_limited");
+    });
+
+    test("room cap: the ninth member is room_full; closers are admitted until the per-address cap", async () => {
       const { room } = await create();
       for (let i = 0; i < 7; i++) await join(room);
       const ninth = await hello(room);
       expect((await ninth.take("error")).code).toBe("room_full");
+      await ninth.waitClosed();
       const c1 = await join(room, { closeOnly: true });
       await join(room, { closeOnly: true });
       expect(c1.welcome.nonce).toBeTypeOf("string");
-      await join(room, { closeOnly: true });
-      expect((await c1.c.take("error")).code).toBe("room_full");
+      // The eleventh socket from one address: relay-cf refuses the upgrade, relay-node the hello.
+      await expectRefused(room, { closeOnly: true });
+      expect(c1.c.frames).toEqual([]);
+      expect(c1.c.closed).toBe(false);
+    });
+
+    test("a room-id holder looping close-only hellos cannot stop the creator's close", async () => {
+      const { room, keys, c: creator } = await create();
+      let stop = false;
+      const attack = (async () => {
+        const held: Conn[] = [];
+        while (!stop) {
+          const c = await Conn.open(relay.url, room).catch(() => undefined);
+          if (!c) continue;
+          held.push(c);
+          c.send({ t: "hello", room, proto: 1, closeOnly: true });
+          await c.take("welcome", () => true, 2000).catch(() => {});
+          if (held.length > 3) held.shift()?.close();
+        }
+        for (const c of held) c.close();
+      })();
+      try {
+        await new Promise((r) => setTimeout(r, 300));
+        const { c, welcome } = await join(room, { closeOnly: true });
+        await new Promise((r) => setTimeout(r, 300));
+        c.send({
+          t: "close",
+          sig: await signClose(keys.secretKey, room, welcome.nonce),
+        });
+        await c.take("closed");
+        await creator.take("closed");
+      } finally {
+        stop = true;
+        await attack;
+      }
     });
 
     test("a closer that never sends close is dropped after the grace period", async () => {

@@ -27,6 +27,11 @@ export interface CfRelay {
  */
 export async function startCfRelay(
   vars: Record<string, string> = {},
+  /** WebSocket upgrades per address per period; tests open far more than the deployed 60/min. */
+  upgradeLimit: { limit: number; period: 10 | 60 } = {
+    limit: 100_000,
+    period: 60,
+  },
 ): Promise<CfRelay> {
   process.env.WRANGLER_SEND_METRICS = "false";
   const { unstable_startWorker } = await import("wrangler");
@@ -40,12 +45,20 @@ export async function startCfRelay(
       saved[i]?.(...args);
     };
   }
-  const bindings = Object.fromEntries(
-    Object.entries({ ...vars, TEST_INSPECT: "1" }).map(([k, value]) => [
-      k,
-      { type: "plain_text" as const, value },
-    ]),
-  );
+  const bindings = {
+    ...Object.fromEntries(
+      Object.entries({ ...vars, TEST_INSPECT: "1" }).map(([k, value]) => [
+        k,
+        { type: "plain_text" as const, value },
+      ]),
+    ),
+    // A fresh namespace per relay, so counts never carry over between test files.
+    UPGRADE_LIMITER: {
+      type: "ratelimit" as const,
+      namespace_id: String(1000 + Math.floor(Math.random() * 1e6)),
+      simple: upgradeLimit,
+    },
+  };
   const worker = await unstable_startWorker({
     config: CONFIG,
     bindings,

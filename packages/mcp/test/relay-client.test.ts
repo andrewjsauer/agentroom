@@ -1,6 +1,12 @@
-import { generateCloseKeyPair, signClose } from "@agentroom/protocol";
+import type { AddressInfo } from "node:net";
+import {
+  generateCloseKeyPair,
+  PING_FRAME,
+  signClose,
+} from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { WebSocketServer } from "ws";
 import {
   backoffDelay,
   connectOnce,
@@ -281,4 +287,61 @@ test("connectOnce: unknown room rejects room_not_found; unreachable rejects", as
   await expect(
     connectOnce({ url: "ws://127.0.0.1:1", hello: hello() }),
   ).rejects.toThrow("cannot reach relay");
+});
+
+/** A stand-in relay that answers hello with `welcome` (plus `extra`) and records text frames. */
+async function fakeRelay(extra: Record<string, unknown>) {
+  const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await new Promise((r) => wss.once("listening", r));
+  const frames: string[] = [];
+  wss.on("connection", (ws) => {
+    ws.on("message", (d) => {
+      const text = d.toString();
+      frames.push(text);
+      if (JSON.parse(text).t !== "hello") return;
+      ws.send(
+        JSON.stringify({
+          t: "welcome",
+          seq: 0,
+          members: 1,
+          expiresAt: Date.now() + 60_000,
+          nonce: "bm9uY2U=",
+          meta: "M",
+          ...extra,
+        }),
+      );
+    });
+  });
+  const { port } = wss.address() as AddressInfo;
+  return { url: `ws://127.0.0.1:${port}`, frames, wss };
+}
+
+test("pings at the interval welcome.ping asks for, and never without it", async () => {
+  for (const [extra, expectPings] of [
+    [{ ping: 20 }, true],
+    [{}, false],
+  ] as const) {
+    const fake = await fakeRelay(extra);
+    const c = new RelayClient({
+      url: fake.url,
+      roomId: ROOM,
+      initialSince: 0,
+      onWelcome: () => {},
+      onMsg: () => {},
+      onPresence: () => {},
+      onGone: () => {},
+    });
+    clients.push(c);
+    c.start();
+    await until(() => c.state === "live");
+    await new Promise((r) => setTimeout(r, 120));
+    const pings = fake.frames.filter((f) => f === PING_FRAME).length;
+    if (expectPings) expect(pings).toBeGreaterThanOrEqual(3);
+    else expect(pings).toBe(0);
+    c.stop();
+    const after = fake.frames.length;
+    await new Promise((r) => setTimeout(r, 60));
+    expect(fake.frames.length).toBe(after);
+    await new Promise((r) => fake.wss.close(() => r(undefined)));
+  }
 });

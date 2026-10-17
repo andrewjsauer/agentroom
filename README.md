@@ -173,9 +173,19 @@ PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agent
 | `MAX_AGE_SEC` | `86400` (24 h) | Default and ceiling for a room's max age |
 | `BUFFER_SIZE` | `500` | Envelopes kept per room for late joiners |
 | `MAX_MEMBERS` | `8` | Connections per room (close-only connections excepted) |
-| `MAX_CLOSERS` | `2` | Close-only connections held per room |
-| `RATE_BURST` / `RATE_PER_SEC` | `20` / `2` | Per-connection token bucket on posts |
+| `MAX_ROOM_CONNS_PER_IP` | `10` | Connections one client address may hold in one room, close-only included |
+| `RATE_BURST` / `RATE_PER_SEC` | `20` / `2` | Token bucket on posts, per client address per room (reconnecting does not refill it) |
 | `CLOSE_GRACE_MS` | `10000` | How long a close-only connection may wait before sending `close` |
+| `HELLO_TIMEOUT_MS` | `10000` | How long a new connection may wait before sending `hello` |
+| `PING_INTERVAL_MS` | `30000` | Keepalive: clients are asked to ping this often; relay-node drops a connection that misses a protocol pong |
+| `MAX_ROOMS` | `1000` | Live rooms on the relay; a create past it is refused (relay-node only) |
+| `MAX_CONNS` | `2000` | Open connections on the relay; more get HTTP 503 (relay-node only) |
+| `MAX_CONNS_PER_IP` | `32` | Open connections from one address across all rooms; more get HTTP 429 (relay-node only) |
+| `MAX_BUFFERED_BYTES` | `268435456` (256 MiB) | Buffered envelopes, meta and close keys across all rooms; past it creates and posts are refused (relay-node only) |
+| `MAX_SEND_BUFFER_BYTES` | `2097152` (2 MiB) | A connection with more unsent output than this is not reading and is dropped (relay-node only) |
+| `EMPTY_ROOM_TTL_SEC` | `900` (15 min) | A room with no member connected for this long is dropped as expired, even within its idle TTL (relay-node only) |
+
+The per-address limits use the TCP peer address. Behind a reverse proxy every client has the proxy's address, so raise `MAX_CONNS_PER_IP`, `MAX_ROOM_CONNS_PER_IP` and the rate limit, or put the per-client limits in the proxy. Every limit variable must be a positive integer; the relay exits with an error naming the variable otherwise.
 
 The relay speaks plain `ws://`. For `wss://`, put it behind a reverse proxy that terminates TLS and forwards the WebSocket upgrade, for example Caddy (`relay.example.com { reverse_proxy 127.0.0.1:8787 }`) or nginx (`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`). Then point both sides at it with `--relay wss://relay.example.com` or `AGENTROOM_RELAY=wss://relay.example.com`. Rooms live in memory, so a restart ends every room.
 
@@ -188,7 +198,20 @@ pnpm install
 pnpm --filter @agentroom/relay-cf exec wrangler deploy
 ```
 
-The limits are the same as relay-node's and are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_CLOSERS`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`). Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object. A cap on how many rooms one IP can create is the operator's job (for example a Cloudflare rate-limiting rule); the relay does not enforce one.
+The room limits are set as `vars` in `packages/relay-cf/wrangler.jsonc`, with the same names and defaults as the table above (`IDLE_TTL_SEC`, `MAX_AGE_SEC`, `BUFFER_SIZE`, `MAX_MEMBERS`, `MAX_ROOM_CONNS_PER_IP`, `RATE_BURST`, `RATE_PER_SEC`, `CLOSE_GRACE_MS`, `HELLO_TIMEOUT_MS`, `PING_INTERVAL_MS`), plus `MEMBER_IDLE_MS` (`120000`: a member that sends nothing, not even a keepalive ping, for 2 minutes is disconnected). A value that is not a positive integer makes every connection fail with HTTP 500 and a log line naming the variable. The relay-node-only caps do not apply: each room is its own Durable Object, rooms are not held in one process's memory, and a non-reading client only fills its own socket. Clients connect to `wss://<your-worker>.workers.dev`; the client adds `?room=<room id>` to the URL so the Worker can route to the room's Durable Object.
+
+What the relay itself enforces against abuse, per client address (`CF-Connecting-IP`):
+
+- WebSocket upgrades: 60 per 60 s, through the Workers Rate Limiting binding `UPGRADE_LIMITER` (`ratelimits` in `wrangler.jsonc`; the period must be 10 or 60 s). Over it the Worker answers HTTP 429 before any Durable Object runs. Cloudflare counts per location and calls this binding permissive and eventually consistent, so it is a brake, not an exact quota.
+- Connections per room: 10 of any kind (HTTP 429 at upgrade, `room_full` at `hello`).
+- Posts: a token bucket per address per room (burst 20, refill 2 per second) that reconnecting does not refill; 20 refused posts in a row close the connection.
+- A connection that sends no `hello` within 10 s, a close-only connection that sends no `close` within 10 s, and a silent member after 2 minutes are closed.
+- Upgrades that carry an `Origin` header (browser pages) get HTTP 403.
+
+Nothing caps how many different rooms one address creates beyond the upgrade rate, and an attacker with many addresses can multiply every per-address figure, so watch the bill:
+
+- In the Cloudflare dashboard, create a budget alert (Manage Account, Billing, Billable Usage, Create budget alert) with a dollar threshold a little above your normal monthly usage. It emails you when account-wide usage-based spend crosses the threshold; usage is processed daily, so it arrives about a day late, and it never pauses or caps anything. A Billable Usage notification (Notifications) can additionally watch a single metric such as Durable Objects requests.
+- Cloudflare WAF rate limiting rules are created for a zone, so they cannot cover a `*.workers.dev` hostname. To add them (or other zone security rules), serve the relay from a custom domain or route on a zone you own, set `"workers_dev": false` in `wrangler.jsonc` so the unprotected `workers.dev` URL goes away (otherwise each deploy turns it back on), and point clients at the new URL with `--relay` or `AGENTROOM_RELAY`.
 
 ## Threat model
 

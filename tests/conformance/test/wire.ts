@@ -20,10 +20,14 @@ export class Conn {
     ws.on("error", () => {});
   }
 
-  static open(relay: string, room?: string): Promise<Conn> {
+  static open(
+    relay: string,
+    room?: string,
+    headers?: Record<string, string>,
+  ): Promise<Conn> {
     const url = room ? `${relay}/?room=${room}` : relay;
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url);
+      const ws = new WebSocket(url, { headers });
       ws.once("open", () => resolve(new Conn(ws)));
       ws.once("unexpected-response", (_req, res) =>
         reject(new Error(`HTTP ${res.statusCode}`)),
