@@ -174,6 +174,8 @@ PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agent
 | `MAX_ROOM_CONNS_PER_IP` | `10` | Connections one client address may hold in one room, close-only included |
 | `RATE_BURST` / `RATE_PER_SEC` | `20` / `2` | Token bucket on posts, per client address per room (reconnecting does not refill it) |
 | `CLOSE_GRACE_MS` | `10000` | How long a close-only connection may wait before sending `close` |
+| `HELLO_TIMEOUT_MS` | `10000` | How long a new connection may wait before sending `hello` |
+| `PING_INTERVAL_MS` | `30000` | Keepalive: clients are asked to ping this often; relay-node drops a connection that misses a protocol pong |
 
 The relay speaks plain `ws://`. For `wss://`, put it behind a reverse proxy that terminates TLS and forwards the WebSocket upgrade, for example Caddy (`relay.example.com { reverse_proxy 127.0.0.1:8787 }`) or nginx (`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`). Then point both sides at it with `--relay wss://relay.example.com` or `AGENTROOM_RELAY=wss://relay.example.com`. Rooms live in memory, so a restart ends every room.
 

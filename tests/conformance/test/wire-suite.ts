@@ -1,9 +1,17 @@
-import { generateCloseKeyPair, signClose } from "@agentroom/protocol";
+import {
+  generateCloseKeyPair,
+  PING_FRAME,
+  signClose,
+} from "@agentroom/protocol";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Conn, type Frame, newRoomId } from "./wire.js";
 
 /** Limits every runner starts its relay with; the rest are the relay defaults. */
-export const SUITE_LIMITS = { bufferSize: 5, closeGraceMs: 500 };
+export const SUITE_LIMITS = {
+  bufferSize: 5,
+  closeGraceMs: 500,
+  helloTimeoutMs: 1000,
+};
 
 export interface WireRelay {
   url: string;
@@ -147,6 +155,23 @@ export function defineWireSuite(
       expect((await made.c.take("error")).code).toBe("bad_proto");
       const d = await hello(made.room, { closeOnly: true, since: 0 });
       expect((await d.take("error")).code).toBe("bad_proto");
+    });
+
+    test("a connection that never sends hello is closed after the hello timeout, pings or not", async () => {
+      const c = await open(newRoomId());
+      // Local workerd (wrangler's dev proxy) never finishes a server-initiated close on a socket
+      // the client has not written to yet, so the client writes a ping first.
+      c.send(PING_FRAME);
+      await c.take("pong");
+      expect((await c.take("error")).code).toBe("bad_proto");
+      await c.waitClosed(SUITE_LIMITS.helloTimeoutMs + 4000);
+    });
+
+    test("welcome asks for keepalive pings and a ping frame gets a pong", async () => {
+      const { c, welcome } = await create();
+      expect(welcome.ping).toBe(30_000);
+      c.send(PING_FRAME);
+      await c.take("pong");
     });
 
     test("an upgrade carrying an Origin header (a browser page) is HTTP 403", async () => {

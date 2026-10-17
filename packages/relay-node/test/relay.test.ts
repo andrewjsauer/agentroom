@@ -1,6 +1,7 @@
 import {
   deriveRoom,
   generateCloseKeyPair,
+  PING_FRAME,
   type RelayFrame,
   seal,
   signClose,
@@ -568,4 +569,35 @@ test("setAccepting, disconnectAll and inject", async () => {
   const { c: b } = await joinRoom();
   relay.inject(ROOM, "QUFB");
   expect(await b.next()).toEqual({ t: "msg", seq: 1, blob: "QUFB" });
+});
+
+describe("liveness", () => {
+  test("a connection that sends no hello is told and closed after helloTimeoutMs", async () => {
+    await start({ helloTimeoutMs: 30 });
+    const c = await connect();
+    expect(await c.next()).toMatchObject({ t: "error", code: "bad_proto" });
+    await c.closed;
+    const { c: ok } = await createRoom();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(ok.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("a peer that stops answering protocol pings is terminated; one that answers stays", async () => {
+    await start({ pingIntervalMs: 30 });
+    const { c: live } = await createRoom();
+    const deaf = new WebSocket(relay.url, { autoPong: false });
+    open.push(deaf);
+    await new Promise((r) => deaf.once("open", r));
+    deaf.send(JSON.stringify({ t: "hello", room: ROOM, proto: 1 }));
+    await new Promise((r) => deaf.once("close", r));
+    expect(live.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  test("welcome asks for pings; a ping frame gets a pong", async () => {
+    await start({ pingIntervalMs: 45_000 });
+    const { c, welcome } = await createRoom();
+    expect(welcome).toMatchObject({ t: "welcome", ping: 45_000 });
+    c.ws.send(PING_FRAME);
+    expect(await c.next()).toEqual({ t: "pong" });
+  });
 });

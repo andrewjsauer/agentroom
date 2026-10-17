@@ -1,3 +1,4 @@
+import { PING_FRAME } from "@agentroom/protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { CF_SKIP, CF_TITLE, type CfRelay, startCfRelay } from "./cf-helpers.js";
 import { Conn, newRoomId } from "./wire.js";
@@ -29,5 +30,35 @@ describe.skipIf(CF_SKIP)(CF_TITLE, () => {
     }
     expect(String(refused)).toContain("HTTP 429");
     expect(opened).toBeGreaterThanOrEqual(limit);
+  }, 60_000);
+
+  test("a silent member is closed after MEMBER_IDLE_MS; one that pings stays", async () => {
+    cf = await startCfRelay({ MEMBER_IDLE_MS: "1500" });
+    const room = newRoomId();
+    const silent = await Conn.open(cf.url, room);
+    const pinging = await Conn.open(cf.url, room);
+    conns.push(silent, pinging);
+    silent.send({
+      t: "hello",
+      room,
+      proto: 1,
+      create: { closeKey: "k", meta: "m" },
+    });
+    await silent.take("welcome");
+    pinging.send({ t: "hello", room, proto: 1 });
+    const welcome = await pinging.take("welcome");
+    expect(welcome.ping).toBe(375);
+    const timer = setInterval(() => pinging.send(PING_FRAME), 300);
+    try {
+      await pinging.take("pong");
+      expect(await silent.waitClosed(6000)).toBe(1001);
+      expect(
+        (await pinging.take("presence", (f) => f.members === 1)).members,
+      ).toBe(1);
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(pinging.closed).toBe(false);
+    } finally {
+      clearInterval(timer);
+    }
   }, 60_000);
 });

@@ -2,6 +2,7 @@ import {
   type ErrorCode,
   type ErrorFrame,
   type HelloFrame,
+  PING_FRAME,
   PROTOCOL_VERSION,
   RelayFrame,
   roomUrl,
@@ -46,6 +47,7 @@ export class RelayClient {
   private since: number;
   private ws: WebSocket | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private pinger: NodeJS.Timeout | undefined;
   private attempt = 0;
   private stopped = false;
 
@@ -60,6 +62,7 @@ export class RelayClient {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearInterval(this.pinger);
     this.ws?.terminate();
   }
 
@@ -100,6 +103,7 @@ export class RelayClient {
     ws.on("error", () => {});
     ws.on("close", () => {
       if (this.ws !== ws || this.stopped || this.state === "gone") return;
+      clearInterval(this.pinger);
       this.setState("backoff");
       const { initialMs, maxMs } = this.opts.backoff ?? {};
       const delay = backoffDelay(this.attempt++, initialMs, maxMs);
@@ -116,11 +120,21 @@ export class RelayClient {
       return;
     }
     switch (frame.t) {
-      case "welcome":
+      case "welcome": {
         this.attempt = 0;
+        clearInterval(this.pinger);
+        const ws = this.ws;
+        // Only relays that ask for it accept `ping`; relay-cf closes members silent for 2 min.
+        if (frame.ping && ws) {
+          this.pinger = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(PING_FRAME);
+          }, frame.ping);
+          this.pinger.unref();
+        }
         this.setState("live");
         this.opts.onWelcome(frame);
         break;
+      }
       case "msg":
         this.since = Math.max(this.since, frame.seq);
         this.opts.onMsg(frame.seq, frame.blob);

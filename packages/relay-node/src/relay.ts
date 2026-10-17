@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import {
   type ErrorCode,
   type HelloFrame,
+  PONG_FRAME,
   type RelayFrame,
   verifyClose,
 } from "@agentroom/protocol";
@@ -41,6 +42,10 @@ export interface RelayOptions {
   rateLimit?: { burst: number; perSec: number };
   /** How long a close-only connection may wait before sending `close` (default 10 s). */
   closeGraceMs?: number;
+  /** How long a new connection may wait before sending `hello` (default 10 s). */
+  helloTimeoutMs?: number;
+  /** Ping every connection this often; one that missed the last pong is dropped (default 30 s). */
+  pingIntervalMs?: number;
   now?: () => number;
   log?: (event: RelayEvent) => void;
 }
@@ -82,6 +87,9 @@ interface Conn {
   nonce?: string;
   closeOnly: boolean;
   graceTimer?: NodeJS.Timeout;
+  helloTimer?: NodeJS.Timeout;
+  /** Answered the last keepalive ping. */
+  alive: boolean;
 }
 
 function defaultLog(event: RelayEvent): void {
@@ -101,6 +109,8 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     rateBurst: opts.rateLimit?.burst ?? d.rateBurst,
     ratePerSec: opts.rateLimit?.perSec ?? d.ratePerSec,
     closeGraceMs: opts.closeGraceMs ?? d.closeGraceMs,
+    helloTimeoutMs: opts.helloTimeoutMs ?? d.helloTimeoutMs,
+    pingIntervalMs: opts.pingIntervalMs ?? d.pingIntervalMs,
   };
   const now = opts.now ?? Date.now;
   const log = opts.log ?? defaultLog;
@@ -234,6 +244,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       expiresAt: expiresAt(room),
       nonce,
       meta: room.state.meta,
+      ping: limits.pingIntervalMs,
     });
     if (conn.closeOnly) {
       log({ event: "closer_open", room: hello.room });
@@ -270,14 +281,27 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     const conn: Conn = {
       ip: req.socket.remoteAddress ?? "",
       closeOnly: false,
+      alive: true,
+      helloTimer: setTimeout(
+        () => fail(ws, "bad_proto", "no hello in time"),
+        limits.helloTimeoutMs,
+      ),
     };
+    conn.helloTimer?.unref();
     conns.set(ws, conn);
     let greeted = false;
     ws.on("error", () => {});
+    ws.on("pong", () => {
+      conn.alive = true;
+    });
     ws.on("message", (data, isBinary) => {
       const frame = isBinary ? undefined : parseClientFrame(data.toString());
       if (!frame) {
         fail(ws, "bad_proto", "malformed frame");
+        return;
+      }
+      if (frame.t === "ping") {
+        ws.send(PONG_FRAME);
         return;
       }
       if (!greeted) {
@@ -286,6 +310,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
           return;
         }
         greeted = true;
+        clearTimeout(conn.helloTimer);
         join(ws, conn, frame);
         return;
       }
@@ -315,6 +340,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     ws.on("close", () => {
       conns.delete(ws);
       clearTimeout(conn.graceTimer);
+      clearTimeout(conn.helloTimer);
       const room = conn.room;
       room?.closers.delete(ws);
       if (!room?.conns.delete(ws)) return;
@@ -338,6 +364,19 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   }, opts.sweepIntervalMs ?? 60_000);
   sweep.unref();
 
+  // Keepalive: a peer that vanished without a FIN would otherwise hold its slot forever.
+  const keepalive = setInterval(() => {
+    for (const [ws, conn] of conns) {
+      if (!conn.alive) {
+        ws.terminate();
+        continue;
+      }
+      conn.alive = false;
+      ws.ping();
+    }
+  }, limits.pingIntervalMs);
+  keepalive.unref();
+
   const port = (wss.address() as AddressInfo).port;
   const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   return {
@@ -345,6 +384,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     port,
     async close() {
       clearInterval(sweep);
+      clearInterval(keepalive);
       for (const c of wss.clients) c.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
     },

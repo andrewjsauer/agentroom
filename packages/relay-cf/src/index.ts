@@ -14,6 +14,9 @@ export interface Env {
   RATE_BURST?: string;
   RATE_PER_SEC?: string;
   CLOSE_GRACE_MS?: string;
+  HELLO_TIMEOUT_MS?: string;
+  PING_INTERVAL_MS?: string;
+  MEMBER_IDLE_MS?: string;
   /** Tests only: "1" enables GET /__inspect?room=<id>, which dumps the room's storage. */
   TEST_INSPECT?: string;
 }

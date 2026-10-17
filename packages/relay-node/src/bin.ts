@@ -30,6 +30,8 @@ const relay = await startRelay({
       ? { burst: burst ?? 20, perSec: perSec ?? 2 }
       : undefined,
   closeGraceMs: num("CLOSE_GRACE_MS"),
+  helloTimeoutMs: num("HELLO_TIMEOUT_MS"),
+  pingIntervalMs: num("PING_INTERVAL_MS"),
 });
 process.stderr.write(`agentroom relay listening on port ${relay.port}\n`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

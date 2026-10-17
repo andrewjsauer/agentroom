@@ -8,6 +8,8 @@ import {
   expiresAt,
   MAX_FRAME_BYTES,
   newNonce,
+  PING_FRAME,
+  PONG_FRAME,
   parseClientFrame,
   type RateState,
   type RelayEvent,
@@ -27,8 +29,15 @@ interface Attachment {
   /** `done`: closed by either side, kept until the runtime drops the socket. */
   role: "pending" | "member" | "closer" | "done";
   nonce?: string;
+  /** A pending socket that has not sent `hello` by then is closed. */
+  helloBy?: number;
   closeBy?: number;
+  /** Last frame that reached the object; auto-answered pings are tracked by the runtime. */
+  seenAt: number;
 }
+
+/** A member silent this long (no frame, no ping) is closed; clients ping every 30 s. */
+const MEMBER_IDLE_MS = 120_000;
 
 const bufferKey = (seq: number) => `b:${String(seq).padStart(10, "0")}`;
 const att = (ws: WebSocket) => ws.deserializeAttachment() as Attachment;
@@ -50,6 +59,8 @@ function limitsFrom(env: Env): RelayLimits {
     rateBurst: n(env.RATE_BURST, d.rateBurst),
     ratePerSec: n(env.RATE_PER_SEC, d.ratePerSec),
     closeGraceMs: n(env.CLOSE_GRACE_MS, d.closeGraceMs),
+    helloTimeoutMs: n(env.HELLO_TIMEOUT_MS, d.helloTimeoutMs),
+    pingIntervalMs: n(env.PING_INTERVAL_MS, d.pingIntervalMs),
   };
 }
 
@@ -61,6 +72,7 @@ export class Room extends DurableObject<Env> {
   private state: RoomState | undefined;
   private tomb: number | undefined;
   private readonly limits: RelayLimits;
+  private readonly memberIdleMs: number;
   /**
    * `put` buckets by client address, shared by that address's sockets. In memory only: the
    * object hibernates only after about 10 s without events, by which time a bucket has
@@ -71,6 +83,11 @@ export class Room extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.limits = limitsFrom(env);
+    this.memberIdleMs = Number(env.MEMBER_IDLE_MS) || MEMBER_IDLE_MS;
+    // Answered by the runtime without waking the object; the alarm reads the time of the last one.
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME),
+    );
     void ctx.blockConcurrencyWhile(async () => {
       this.state = await ctx.storage.get<RoomState>("room");
       this.tomb = await ctx.storage.get<number>("tomb");
@@ -94,11 +111,15 @@ export class Room extends DurableObject<Env> {
       WebSocket,
     ];
     this.ctx.acceptWebSocket(server, [ip]);
+    const now = Date.now();
     server.serializeAttachment({
       room,
       ip,
       role: "pending",
+      helloBy: now + this.limits.helloTimeoutMs,
+      seenAt: now,
     } satisfies Attachment);
+    await this.schedule();
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -179,12 +200,32 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  /** One alarm at the earliest of expiry, a closer's grace deadline, and the tombstone time. */
+  /** When a socket's next deadline falls: hello, close grace, or member silence. */
+  private deadline(ws: WebSocket): number | undefined {
+    const a = att(ws);
+    if (a.role === "pending") return a.helloBy;
+    if (a.role === "closer") return a.closeBy;
+    if (a.role !== "member") return undefined;
+    const pinged = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime();
+    return Math.max(a.seenAt, pinged ?? 0) + this.memberIdleMs;
+  }
+
+  /**
+   * One alarm at the earliest of expiry (or the tombstone time) and every socket's deadline.
+   * Rewritten only when it moves, so a new connection usually costs no storage write.
+   */
   private async schedule(): Promise<void> {
-    const times = this.sockets("closer").map((w) => att(w).closeBy ?? 0);
+    const times = this.ctx
+      .getWebSockets()
+      .map((w) => this.deadline(w))
+      .filter((t) => t !== undefined);
     if (this.state) times.push(expiresAt(this.state));
     else if (this.tomb !== undefined) times.push(this.tomb);
-    if (times.length > 0) await this.ctx.storage.setAlarm(Math.min(...times));
+    if (times.length === 0) return;
+    const at = Math.min(...times);
+    if ((await this.ctx.storage.getAlarm()) !== at) {
+      await this.ctx.storage.setAlarm(at);
+    }
   }
 
   override async alarm(): Promise<void> {
@@ -200,12 +241,27 @@ export class Room extends DurableObject<Env> {
       await this.ctx.storage.deleteAll();
       await this.ctx.storage.deleteAlarm();
       this.tomb = undefined;
-      return;
     }
-    for (const w of this.sockets("closer")) {
-      if ((att(w).closeBy ?? 0) > now) continue;
-      // `done` first: a peer that never answers the close must not keep rescheduling the alarm.
-      this.drop(w, 1000);
+    let idled = false;
+    for (const w of this.ctx.getWebSockets()) {
+      const due = this.deadline(w);
+      if (due === undefined || due > now) continue;
+      // Each path marks the socket `done` first, so a peer that never answers the close does
+      // not keep rescheduling the alarm.
+      const role = att(w).role;
+      if (role === "pending") {
+        this.fail(w, "bad_proto", "no hello in time");
+      } else if (role === "closer") {
+        this.drop(w, 1000);
+      } else {
+        this.drop(w, 1001, "idle: no frame or ping in time");
+        idled = true;
+      }
+    }
+    if (idled && this.state) {
+      const members = this.sockets("member").length;
+      this.broadcast({ t: "presence", members });
+      log({ event: "conn_close", room: this.state.roomId, members });
     }
     await this.schedule();
   }
@@ -228,6 +284,14 @@ export class Room extends DurableObject<Env> {
       return;
     }
     const a = att(ws);
+    if (a.role === "done") return;
+    a.seenAt = Date.now();
+    ws.serializeAttachment(a);
+    if (frame.t === "ping") {
+      // A ping that is not byte-identical to PING_FRAME misses the auto-response.
+      ws.send(PONG_FRAME);
+      return;
+    }
     if (a.role === "pending") {
       if (frame.t !== "hello") {
         this.fail(ws, "bad_proto", "first frame must be hello");
@@ -277,6 +341,8 @@ export class Room extends DurableObject<Env> {
       return;
     }
     const state0 = await this.live();
+    // The alarm may have timed this socket out while `live()` awaited.
+    if (att(ws).role === "done") return;
     const now = Date.now();
     const d = decideHello(hello, {
       room: state0,
@@ -317,6 +383,11 @@ export class Room extends DurableObject<Env> {
       expiresAt: expiresAt(state),
       nonce: a.nonce,
       meta: state.meta,
+      // Several pings per idle window, so one lost ping does not cost the connection.
+      ping: Math.min(
+        this.limits.pingIntervalMs,
+        Math.floor(this.memberIdleMs / 4),
+      ),
     });
     if (d.closeOnly) {
       log({ event: "closer_open", room: hello.room });

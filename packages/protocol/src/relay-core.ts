@@ -4,6 +4,8 @@
  */
 import { ClientFrame, type ErrorCode, type HelloFrame } from "./wire.js";
 
+export { PING_FRAME, PONG_FRAME } from "./wire.js";
+
 export interface RelayLimits {
   /** Ceiling for a room's idle TTL. */
   idleTtlSec: number;
@@ -24,6 +26,13 @@ export interface RelayLimits {
   ratePerSec: number;
   /** How long a close-only connection may wait before sending `close`. */
   closeGraceMs: number;
+  /** How long a new connection may wait before sending `hello`. */
+  helloTimeoutMs: number;
+  /**
+   * Keepalive period: relay-node pings every connection this often and drops one that missed a
+   * pong; `welcome.ping` asks clients to send `{"t":"ping"}` at least this often.
+   */
+  pingIntervalMs: number;
 }
 
 export const DEFAULT_LIMITS: RelayLimits = {
@@ -36,6 +45,8 @@ export const DEFAULT_LIMITS: RelayLimits = {
   rateBurst: 20,
   ratePerSec: 2,
   closeGraceMs: 10_000,
+  helloTimeoutMs: 10_000,
+  pingIntervalMs: 30_000,
 };
 
 /** Largest WebSocket frame a relay accepts. */

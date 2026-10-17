@@ -30,8 +30,16 @@ export const ClientFrame = z.discriminatedUnion("t", [
   HelloFrame,
   z.object({ t: z.literal("put"), blob: z.string() }),
   z.object({ t: z.literal("close"), sig: z.string() }),
+  z.object({ t: z.literal("ping") }),
 ]);
 export type ClientFrame = z.infer<typeof ClientFrame>;
+
+/**
+ * Keepalive frames, byte for byte: relay-cf answers PING_FRAME with PONG_FRAME through a
+ * Durable Object auto-response, which matches the exact text.
+ */
+export const PING_FRAME = '{"t":"ping"}';
+export const PONG_FRAME = '{"t":"pong"}';
 
 export const ErrorCode = z.enum([
   "room_not_found",
@@ -52,6 +60,11 @@ export const WelcomeFrame = z.object({
   expiresAt: z.number(),
   nonce: z.string(),
   meta: z.string(),
+  /**
+   * Keepalive request: send PING_FRAME at least this often (ms). Relays without it accept no
+   * `ping`, so clients ping only when it is present.
+   */
+  ping: z.number().int().positive().optional(),
 });
 export type WelcomeFrame = z.infer<typeof WelcomeFrame>;
 
@@ -71,6 +84,7 @@ export const RelayFrame = z.discriminatedUnion("t", [
     members: z.number().int().nonnegative(),
   }),
   z.object({ t: z.literal("closed") }),
+  z.object({ t: z.literal("pong") }),
   ErrorFrame,
 ]);
 export type RelayFrame = z.infer<typeof RelayFrame>;
