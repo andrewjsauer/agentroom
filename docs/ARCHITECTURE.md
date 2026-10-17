@@ -112,23 +112,23 @@ HKDF comes from Node's `crypto.hkdfSync` (`libsodium-wrappers` does not expose H
 ```ts
 const Envelope = z.object({
   v: z.literal(1),
-  id: z.string(),                 // ULID: sortable, unique
+  id: z.string().max(64),         // ULID: sortable, unique
   ts: z.number().int().min(0).max(8.64e15), // sender clock, ms; within Date range so it always formats
   from: z.object({
-    member: z.string(),           // display name, e.g. "andrew"
-    agent: z.string(),            // "claude-code" | "codex" | "gemini" | "cursor" | "human"
+    member: z.string().max(64),   // display name, e.g. "andrew"
+    agent: z.string().max(64),    // "claude-code" | "codex" | "gemini" | "cursor" | "human"
     via: z.enum(["mcp", "hook", "watch", "cli"]), // which input path produced it
   }),
   kind: z.enum(["question", "answer", "decision", "handoff", "fyi", "approve", "presence"]),
-  thread: z.string(),             // root message id (equals id for a new thread)
-  replyTo: z.string().optional(),
-  to: z.string().optional(),      // member name; absent means everyone
+  thread: z.string().max(64),     // root message id (equals id for a new thread)
+  replyTo: z.string().max(64).optional(),
+  to: z.string().max(64).optional(), // member name; absent means everyone
   body: z.string().max(8_000),    // markdown
   refs: z.array(z.object({
-    repo: z.string(),             // e.g. "client-sdk-ios"
-    path: z.string(),
-    lines: z.string().optional(), // "12-40"
-    commit: z.string().optional(),
+    repo: z.string().max(128),    // e.g. "client-sdk-ios"
+    path: z.string().max(512),    // repo-relative: no leading / or \, no drive letter, no ".." segment
+    lines: z.string().max(64).optional(), // "12-40"
+    commit: z.string().max(64).optional(),
   })).max(20).default([]),
   requiresHuman: z.boolean().default(false),
 });
@@ -140,6 +140,7 @@ Notes:
 - Human input paths, from most to least robust against accident: the MCP server never emits `agent: "human"` (hard guarantee, tested); the Claude Code `UserPromptSubmit` hook fires only on text the user typed; the `watch` pane and CLI `say`/`approve` rely on an interactive terminal plus a refusal when an agent environment marker (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, `AI_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `GEMINI_CLI` or `CURSOR_AGENT`; see `OPEN_QUESTIONS.md` item 17) is set, which an agent with a shell can defeat deliberately (allocate a pty, clear the variable).
 - Released drafts (`/ask`, `/handoff` in `UX.md`) keep the drafting agent's `from.agent` with `via: "hook"`; they are never tagged human. The human's `/send` also posts a human `approve` envelope for that thread, so approving a draft counts as the human taking part.
 - `handoff` bodies follow a fixed markdown template: Summary, Decisions, Open questions, Refs.
+- String fields are bounded (ids and names 64, ref repo 128, ref path 512, ref lines and commit 64) so a peer cannot flood framed output through a display name or carry file contents in a ref (invariant 6). The schema applies on send and on receive: an envelope that fails it is dropped and counted in `decryptFailures` (shown as "Decrypt failures" in `room_status`), the same counter as a blob that does not decrypt, since `open` reports both as one `CryptoError`. A peer on an older version that sends a longer field, or an absolute ref path, is dropped this way. `queue.jsonl` lines that fail the schema (written by an older version) are skipped on replay and by `export`.
 
 ## Chain limit (lives in `protocol`, enforced in `mcp`)
 
@@ -230,5 +231,5 @@ Claude Code push: if channels are available, the MCP server also declares the ch
 - Room expired or closed: on `room_expired`, `room_not_found` or `closed` the MCP server stops reconnecting, rejects any in-flight send at once, deletes the room directory, clears `current` if it names the room, allows one final read of unread messages, and then answers every tool with a terminal text telling the user to run `agentroom up` again ("The room was closed by its creator." for `closed`, the expiry text otherwise).
 - Non-terminal relay errors (`rate_limited`, `too_large`, `room_full`) fail the oldest in-flight send at once with a text naming the cause instead of waiting out the 10 s echo timeout; sends are serialized, so that send caused it. On `room_full` the client stays in backoff and keeps reconnecting.
 - An exception while processing an inbound message is logged to stderr and never crashes the server.
-- Decryption failure: drop the envelope, count it, surface a warning in `room_status`.
+- Decryption or schema failure: drop the envelope, count it in `decryptFailures`, surface a warning in `room_status`.
 - Clock skew: ordering uses relay seq, not `ts`.

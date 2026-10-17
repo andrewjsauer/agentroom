@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { Envelope, isoTime, MAX_TIME_MS, RoomMeta } from "../src/index.js";
+import {
+  Envelope,
+  isoTime,
+  isRepoRelative,
+  MAX_TIME_MS,
+  RoomMeta,
+  ulid,
+} from "../src/index.js";
 
 const base = {
   v: 1,
@@ -63,6 +70,89 @@ describe("Envelope", () => {
     expect(JSON.stringify(env)).not.toContain("contents");
     expect(JSON.stringify(env)).not.toContain("secret code");
   });
+});
+
+describe("string limits", () => {
+  const ref = base.refs[0] as Record<string, string>;
+  test.each([
+    ["a 65-character id", { id: "x".repeat(65) }],
+    ["a 65-character thread", { thread: "x".repeat(65) }],
+    ["a 65-character replyTo", { replyTo: "x".repeat(65) }],
+    ["a 65-character to", { to: "x".repeat(65) }],
+    [
+      "a 65-character member",
+      { from: { ...base.from, member: "m".repeat(65) } },
+    ],
+    [
+      "a 50,000-character member",
+      { from: { ...base.from, member: "m".repeat(50_000) } },
+    ],
+    ["a 65-character agent", { from: { ...base.from, agent: "a".repeat(65) } }],
+    ["a 129-character ref repo", { refs: [{ ...ref, repo: "r".repeat(129) }] }],
+    ["a 513-character ref path", { refs: [{ ...ref, path: "p".repeat(513) }] }],
+    [
+      "42 KB of code in a ref path",
+      { refs: [{ ...ref, path: "x;\n".repeat(14_000) }] },
+    ],
+    ["a 65-character ref lines", { refs: [{ ...ref, lines: "1".repeat(65) }] }],
+    [
+      "a 65-character ref commit",
+      { refs: [{ ...ref, commit: "c".repeat(65) }] },
+    ],
+  ])("rejects %s", (_name, patch) => {
+    expect(Envelope.safeParse({ ...base, ...patch }).success).toBe(false);
+  });
+
+  test("accepts every field at its maximum", () => {
+    const env = Envelope.parse({
+      ...base,
+      id: "i".repeat(64),
+      thread: "t".repeat(64),
+      replyTo: "r".repeat(64),
+      to: "o".repeat(64),
+      from: { ...base.from, member: "m".repeat(64), agent: "a".repeat(64) },
+      refs: [
+        {
+          repo: "r".repeat(128),
+          path: "p".repeat(512),
+          lines: "1".repeat(64),
+          commit: "c".repeat(64),
+        },
+      ],
+    });
+    expect(env.refs[0]?.path).toHaveLength(512);
+  });
+
+  test("a ULID id fits", () => {
+    expect(
+      Envelope.parse({ ...base, id: ulid(), thread: ulid() }),
+    ).toBeTruthy();
+  });
+
+  test.each([
+    "/etc/passwd",
+    "\\\\server\\share\\x",
+    "C:\\Users\\me\\x.ts",
+    "c:/x.ts",
+    "../outside.ts",
+    "src/../../outside.ts",
+    "src\\..\\..\\x",
+    "..",
+  ])("rejects the non-repo-relative ref path %s", (path) => {
+    expect(isRepoRelative(path)).toBe(false);
+    expect(
+      Envelope.safeParse({ ...base, refs: [{ repo: "r", path }] }).success,
+    ).toBe(false);
+  });
+
+  test.each(["src/a.ts", "a..b/c.ts", ".github/workflows/ci.yml", "x"])(
+    "accepts the repo-relative ref path %s",
+    (path) => {
+      expect(
+        Envelope.safeParse({ ...base, refs: [{ repo: "r", path }] }).success,
+      ).toBe(true);
+    },
+  );
 });
 
 describe("ts", () => {
