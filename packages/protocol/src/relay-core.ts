@@ -52,6 +52,12 @@ export const DEFAULT_LIMITS: RelayLimits = {
 /** Largest WebSocket frame a relay accepts. */
 export const MAX_FRAME_BYTES = 96 * 1024;
 
+/**
+ * Consecutive refused `put`s (`rate_limited`, `too_large`) after which the relay closes the
+ * connection. Serialized clients never get near it; a flooding one stops costing work.
+ */
+export const MAX_REFUSALS = 20;
+
 /** Structured relay event. Never carries a blob or meta (invariant 1). */
 export type RelayEvent =
   | { event: "room_created"; room: string }

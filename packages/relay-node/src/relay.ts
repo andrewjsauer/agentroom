@@ -12,6 +12,7 @@ import {
   DEFAULT_LIMITS,
   decideHello,
   MAX_FRAME_BYTES,
+  MAX_REFUSALS,
   newNonce,
   parseClientFrame,
   type RateState,
@@ -90,6 +91,8 @@ interface Conn {
   helloTimer?: NodeJS.Timeout;
   /** Answered the last keepalive ping. */
   alive: boolean;
+  /** Consecutive refused puts. */
+  refusals: number;
 }
 
 function defaultLog(event: RelayEvent): void {
@@ -282,6 +285,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       ip: req.socket.remoteAddress ?? "",
       closeOnly: false,
       alive: true,
+      refusals: 0,
       helloTimer: setTimeout(
         () => fail(ws, "bad_proto", "no hello in time"),
         limits.helloTimeoutMs,
@@ -332,9 +336,11 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       const rate = rateFor(room.rates, conn.ip, t, limits);
       const admit = admitPut(rate, frame.blob, t, limits);
       if (!admit.ok) {
-        fail(ws, admit.code, admit.message, false);
+        conn.refusals += 1;
+        fail(ws, admit.code, admit.message, conn.refusals >= MAX_REFUSALS);
         return;
       }
+      conn.refusals = 0;
       put(room, frame.blob);
     });
     ws.on("close", () => {

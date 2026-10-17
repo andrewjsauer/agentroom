@@ -7,6 +7,7 @@ import {
   decideHello,
   expiresAt,
   MAX_FRAME_BYTES,
+  MAX_REFUSALS,
   newNonce,
   PING_FRAME,
   PONG_FRAME,
@@ -34,7 +35,12 @@ interface Attachment {
   closeBy?: number;
   /** Last frame that reached the object; auto-answered pings are tracked by the runtime. */
   seenAt: number;
+  /** Consecutive refused puts. */
+  refusals?: number;
 }
+
+/** Buffered envelopes read per storage call when replaying `since`. */
+const REPLAY_PAGE = 50;
 
 /** A member silent this long (no frame, no ping) is closed; clients ping every 30 s. */
 const MEMBER_IDLE_MS = 120_000;
@@ -274,8 +280,13 @@ export class Room extends DurableObject<Env> {
       this.fail(ws, "bad_proto", "malformed frame");
       return;
     }
-    if (new TextEncoder().encode(message).length > MAX_FRAME_BYTES) {
-      ws.close(1009, "frame too large");
+    // UTF-8 never has fewer bytes than UTF-16 code units, so the length check is safe and
+    // saves encoding an oversized frame; the encode check catches multi-byte text.
+    if (
+      message.length > MAX_FRAME_BYTES ||
+      new TextEncoder().encode(message).length > MAX_FRAME_BYTES
+    ) {
+      this.drop(ws, 1009, "frame too large");
       return;
     }
     const frame = parseClientFrame(message);
@@ -318,8 +329,14 @@ export class Room extends DurableObject<Env> {
     const rate = rateFor(this.rates, a.ip, now, this.limits);
     const admit = admitPut(rate, frame.blob, now, this.limits);
     if (!admit.ok) {
-      this.fail(ws, admit.code, admit.message, false);
+      a.refusals = (a.refusals ?? 0) + 1;
+      ws.serializeAttachment(a);
+      this.fail(ws, admit.code, admit.message, a.refusals >= MAX_REFUSALS);
       return;
+    }
+    if (a.refusals) {
+      a.refusals = 0;
+      ws.serializeAttachment(a);
     }
     const seq = applyPut(state, now);
     // The output gate holds the broadcast until these writes commit.
@@ -392,19 +409,34 @@ export class Room extends DurableObject<Env> {
     if (d.closeOnly) {
       log({ event: "closer_open", room: hello.room });
     } else {
-      if (hello.since !== undefined) {
-        const buffered = await this.ctx.storage.list<string>({
-          prefix: "b:",
-          start: bufferKey(hello.since + 1),
-        });
-        for (const [key, blob] of buffered) {
-          this.send(ws, { t: "msg", seq: Number(key.slice(2)), blob });
-        }
-      }
+      if (hello.since !== undefined) await this.replay(ws, hello.since);
       this.broadcast({ t: "presence", members }, ws);
       log({ event: "conn_open", room: hello.room, members });
     }
     await this.schedule();
+  }
+
+  /**
+   * Send buffered envelopes after `since`, a page at a time, stopping if the socket goes away.
+   * Input gates hold other events during each read, so no live `msg` interleaves.
+   */
+  private async replay(ws: WebSocket, since: number): Promise<void> {
+    let start = bufferKey(since + 1);
+    for (;;) {
+      const page = await this.ctx.storage.list<string>({
+        prefix: "b:",
+        start,
+        limit: REPLAY_PAGE,
+      });
+      if (att(ws).role !== "member") return;
+      let last = since;
+      for (const [key, blob] of page) {
+        last = Number(key.slice(2));
+        this.send(ws, { t: "msg", seq: last, blob });
+      }
+      if (page.size < REPLAY_PAGE) return;
+      start = bufferKey(last + 1);
+    }
   }
 
   private async close(ws: WebSocket, a: Attachment, sig: string) {

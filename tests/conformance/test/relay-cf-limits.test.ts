@@ -32,6 +32,31 @@ describe.skipIf(CF_SKIP)(CF_TITLE, () => {
     expect(opened).toBeGreaterThanOrEqual(limit);
   }, 60_000);
 
+  test("since replay reads storage in pages and still delivers every envelope in order", async () => {
+    cf = await startCfRelay({ RATE_BURST: "500" });
+    const room = newRoomId();
+    const a = await Conn.open(cf.url, room);
+    conns.push(a);
+    a.send({
+      t: "hello",
+      room,
+      proto: 1,
+      create: { closeKey: "k", meta: "m" },
+    });
+    await a.take("welcome");
+    for (let i = 0; i < 120; i++) a.send({ t: "put", blob: "AAAA" });
+    await a.take("msg", (f) => f.seq === 120, 20_000);
+    const late = await Conn.open(cf.url, room);
+    conns.push(late);
+    late.send({ t: "hello", room, proto: 1, since: 3 });
+    await late.take("welcome");
+    await late.take("msg", (f) => f.seq === 120, 20_000);
+    const seqs = late.frames.filter((f) => f.t === "msg").map((f) => f.seq);
+    expect([...seqs, 120]).toEqual(
+      Array.from({ length: 117 }, (_, i) => i + 4),
+    );
+  }, 60_000);
+
   test("a silent member is closed after MEMBER_IDLE_MS; one that pings stays", async () => {
     cf = await startCfRelay({ MEMBER_IDLE_MS: "1500" });
     const room = newRoomId();
