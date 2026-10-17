@@ -8,7 +8,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
@@ -24,6 +23,7 @@ import {
   isObject,
 } from "../claude-settings.js";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
+import { writeConfigFile } from "../write-file.js";
 
 /**
  * The stdio command an agent runs (plan KTD15): always the absolute node binary plus an absolute
@@ -162,7 +162,7 @@ function writeProjectMcp(roomId: string, ctx: CliContext): void {
   const servers = isObject(config.mcpServers) ? config.mcpServers : {};
   servers.agentroom = { type: "stdio", command, args };
   config.mcpServers = servers;
-  writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+  writeConfigFile(file, `${JSON.stringify(config, null, 2)}\n`);
   ctx.stdout.write(
     `\`claude\` is not on PATH, so the server was written to ${file} (project scope). Do not commit that file: it names the room id. Restart Claude Code in this directory to load the tools.\n`,
   );

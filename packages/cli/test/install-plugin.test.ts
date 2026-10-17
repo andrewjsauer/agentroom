@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -293,4 +294,50 @@ test("the ask rules keep the user's own, are not duplicated, and uninstall remov
     defaultMode: "auto",
     ask: ["Bash(git push:*)"],
   });
+});
+
+test("uninstall claude removes the user-scope MCP server before the plugin", async () => {
+  const s = setup();
+  const t = s.ctx();
+  expect(await main(["uninstall", "claude"], t.ctx)).toBe(0);
+  expect(calls(s.fake.log)).toEqual([
+    ["mcp", "remove", "--scope", "user", "agentroom"],
+    ["plugin", "uninstall", "agentroom@agentroom", "--scope", "user"],
+  ]);
+  expect(t.out()).toContain("Removed the user-scope agentroom MCP server.");
+});
+
+test("uninstall claude drops only mcpServers.agentroom from ./.mcp.json, keeping the file and its mode", async () => {
+  const s = setup();
+  const t = s.ctx({ PATH: dir() });
+  expect(await main(["install", "claude"], t.ctx)).toBe(0);
+  const file = join(t.ctx.cwd, ".mcp.json");
+  const written = JSON.parse(readFileSync(file, "utf8"));
+  written.mcpServers.other = { type: "stdio", command: "other" };
+  writeFileSync(file, JSON.stringify(written));
+  chmodSync(file, 0o640);
+  const un = makeCtx(s.home, { cwd: t.ctx.cwd, env: { PATH: dir() } });
+  expect(await main(["uninstall", "claude"], un.ctx)).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    mcpServers: { other: { type: "stdio", command: "other" } },
+  });
+  expect(statSync(file).mode & 0o777).toBe(0o640);
+  expect(un.out()).toContain(`Removed the agentroom server from ${file}`);
+
+  // Nothing of ours left: the file is untouched and nothing is reported.
+  const again = makeCtx(s.home, { cwd: t.ctx.cwd, env: { PATH: dir() } });
+  const before = readFileSync(file, "utf8");
+  expect(await main(["uninstall", "claude"], again.ctx)).toBe(0);
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(again.out()).not.toContain(".mcp.json");
+});
+
+test("uninstall claude leaves an invalid .mcp.json alone and still finishes", async () => {
+  const s = setup();
+  const cwd = dir();
+  writeFileSync(join(cwd, ".mcp.json"), "{oops");
+  const t = makeCtx(s.home, { cwd, env: { PATH: dir() } });
+  expect(await main(["uninstall", "claude"], t.ctx)).toBe(0);
+  expect(readFileSync(join(cwd, ".mcp.json"), "utf8")).toBe("{oops");
+  expect(t.out()).toContain("not a JSON object; left it as is");
 });

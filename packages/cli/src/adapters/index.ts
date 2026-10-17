@@ -1,15 +1,7 @@
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type CliContext, CliError } from "../context.js";
+import { writeConfigFile } from "../write-file.js";
 import { removeJsonEntry, setJsonEntry } from "./json-config.js";
 import { removeBlock, upsertBlock } from "./snippet.js";
 import {
@@ -111,13 +103,7 @@ function applyAll(
       rmSync(file, { force: true });
     } else {
       // Write through a symlink and keep the mode: these files can hold other servers' secrets.
-      const exists = existsSync(file);
-      const target = exists ? realpathSync(file) : file;
-      const mode = exists ? statSync(target).mode & 0o777 : undefined;
-      mkdirSync(dirname(target), { recursive: true });
-      const tmp = `${target}.agentroom-tmp`;
-      writeFileSync(tmp, after, { mode });
-      renameSync(tmp, target);
+      writeConfigFile(file, after);
     }
     changed.push(`${after === "" ? "Removed" : "Updated"} ${file}`);
   }

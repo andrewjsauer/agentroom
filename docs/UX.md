@@ -21,7 +21,7 @@ agentroom approve <thread>         # human approval; resets the chain limit; req
 agentroom export [--thread id] [--format md|gh-issue]
 agentroom sync-mode [between|manual|live]   # delivery mode for Claude Code (no TTY needed)
 agentroom install <agent>          # write MCP config (and plugin plus status line, for Claude Code)
-agentroom uninstall claude         # remove the plugin and restore your previous status line
+agentroom uninstall claude         # remove the plugin, MCP registrations and ask rules; restore your previous status line
 ```
 
 Used by the Claude Code plugin, not typed by hand: `agentroom mcp` (serves the current room, or a "no room" stub that says how to start one), `agentroom hook prompt-expansion|prompt-submit`, and `agentroom statusline [--chain <cmd>]`.
@@ -39,7 +39,7 @@ The plugin lives in `plugins/claude-code/` and bundles the MCP server (`.mcp.jso
 - `agentroom install claude` (also run by `up`/`join --agent claude`) removes the M1 user-scope MCP registration, runs `claude plugin install agentroom --marketplace <checkout> --scope user`, and writes the status line. Restart Claude Code (or run `/reload-plugins`), then type `/agentroom:sync`.
 - Without `claude` on PATH it writes the M1 `.mcp.json`, writes the status line, and prints `claude --plugin-dir <checkout>/plugins/claude-code`.
 - From an npm copy of the CLI it keeps the M1 `claude mcp add` registration (node plus an absolute entry path, as for other agents below); the plugin arrives with the npm release (M4).
-- `agentroom uninstall claude` restores your previous status line (if it is still ours) and runs `claude plugin uninstall agentroom@agentroom`.
+- `agentroom uninstall claude` restores your previous status line (if it is still ours), removes the ask rules, removes `mcpServers.agentroom` from `./.mcp.json` if present (keeping the file and the other entries; written atomically through a symlink with its mode kept), then runs `claude mcp remove --scope user agentroom` (failure ignored) and `claude plugin uninstall agentroom@agentroom`.
 
 The plugin needs `node` 20.19+ on Claude Code's PATH. Its MCP server serves the room named in `current` when it starts, so after `up` or `join` restart Claude Code (or reconnect the server in `/mcp`); with no room it answers every tool with how to start one.
 
