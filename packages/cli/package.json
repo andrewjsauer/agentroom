@@ -1,6 +1,6 @@
 {
   "name": "@sauerapple/agentroom",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Let your coding agent talk to a coworker's agent through a temporary, end-to-end encrypted room.",
   "license": "Apache-2.0",
   "repository": {
