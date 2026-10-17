@@ -221,6 +221,37 @@ test("wait resolves with the expiry result when the room expires mid-wait", asyn
   expect(await pending).toBe(ROOM_EXPIRED_TEXT);
 });
 
+test("a persisted message with an out-of-range ts is skipped on restart; status still renders", async () => {
+  const { home, session } = await pair();
+  session.close();
+  const env = {
+    v: 1,
+    id: "01FARFUTURE000000000000000",
+    ts: 1e20,
+    from: { member: "eve", agent: "codex", via: "mcp" },
+    kind: "fyi",
+    thread: "01FARFUTURE000000000000000",
+    body: "far-future",
+    refs: [],
+    requiresHuman: false,
+  };
+  writeFileSync(
+    join(roomDir(home, room.roomId), "queue.jsonl"),
+    `${JSON.stringify({ t: "msg", seq: 50, env, own: false })}\n`,
+    { flag: "a" },
+  );
+  const again = createRoomSession({
+    roomId: room.roomId,
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(again);
+  await until(() => again.status().connection === "live", 5000, "live");
+  const s = again.status();
+  expect(s.membersSeen.some((m) => m.member === "eve")).toBe(false);
+  expect(again.inbox()).not.toContain("far-future");
+});
+
 test("status.json mirrors status() after an exchange", async () => {
   const { home, session, b } = await pair();
   await b.session.send({ kind: "fyi", body: "x" });

@@ -10,6 +10,7 @@ import {
 } from "@agentroom/mcp";
 import {
   deriveRoom,
+  isoTime,
   MAX_AGENT_CHAIN,
   openMeta,
   parseShareCode,
@@ -101,7 +102,7 @@ export async function join(
   ctx.stdout.write(
     [
       `Joined room ${roomId} as ${member} (${agent}) via ${relay}.`,
-      `Expires after ${hoursUntil(res.expiresAt)} h without activity (${new Date(res.expiresAt).toISOString()}).`,
+      `Expires after ${hoursUntil(res.expiresAt)} h without activity (${isoTime(res.expiresAt)}).`,
       ...(meta.clampedFrom === undefined
         ? []
         : [

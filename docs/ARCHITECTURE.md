@@ -58,7 +58,7 @@ Relay wire protocol (JSON over WebSocket, plaintext framing around ciphertext). 
 { t: "put", blob: string /* base64 ciphertext */ }
 { t: "close", sig: string /* base64 Ed25519 signature over utf8(hex room_id) || raw bytes of base64-decoded welcome.nonce */ }
 // relay -> client
-{ t: "welcome", seq: number, members: number, expiresAt: number, nonce: string, meta: string }
+{ t: "welcome", seq: number, members: number, expiresAt: number /* whole ms, 0 to 8.64e15 */, nonce: string, meta: string }
 { t: "msg", seq: number, blob: string }
 { t: "presence", members: number }
 { t: "closed" }
@@ -113,7 +113,7 @@ HKDF comes from Node's `crypto.hkdfSync` (`libsodium-wrappers` does not expose H
 const Envelope = z.object({
   v: z.literal(1),
   id: z.string(),                 // ULID: sortable, unique
-  ts: z.number(),                 // sender clock, ms
+  ts: z.number().int().min(0).max(8.64e15), // sender clock, ms; within Date range so it always formats
   from: z.object({
     member: z.string(),           // display name, e.g. "andrew"
     agent: z.string(),            // "claude-code" | "codex" | "gemini" | "cursor" | "human"

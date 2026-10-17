@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+/** The largest time a JS Date can hold, in ms since the epoch. */
+export const MAX_TIME_MS = 8.64e15;
+
+/** A wall-clock time in ms that `new Date(ms).toISOString()` can always format. */
+export const TimeMs = z.number().int().min(0).max(MAX_TIME_MS);
+
+/** ISO 8601 for a time in ms, or "unknown" for null, non-finite or out-of-range values. */
+export function isoTime(ms: number | null | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "unknown";
+  if (ms < 0 || ms > MAX_TIME_MS) return "unknown";
+  return new Date(ms).toISOString();
+}
+
 /** A code reference. Each side reads its own checkout (invariant 6: no file contents). */
 export const Ref = z.object({
   repo: z.string(),
@@ -24,7 +37,7 @@ export type EnvelopeKind = z.infer<typeof EnvelopeKind>;
 export const Envelope = z.object({
   v: z.literal(1),
   id: z.string(),
-  ts: z.number(),
+  ts: TimeMs,
   from: z.object({
     member: z.string(),
     agent: z.string(),

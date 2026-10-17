@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdtempSync,
@@ -212,6 +213,18 @@ test("an agent marker or a non-TTY stdin refuses and writes nothing", async () =
   expect(await main(["export"], pipe.ctx)).toBe(1);
   expect(pipe.out()).toBe("");
   expect(readdirSync(tmp)).toEqual([]);
+});
+
+test("a queue line with an out-of-range ts from an older version does not break export", async () => {
+  const env = add({ thread: "T", body: "fine" });
+  appendFileSync(
+    join(home, "rooms", ROOM, "queue.jsonl"),
+    `${JSON.stringify({ t: "msg", seq: 99, env: { ...env, id: "bad", ts: 1e20, body: "far-future" }, own: false })}\n`,
+  );
+  const t = tty();
+  expect(await main(["export"], t.ctx)).toBe(0);
+  expect(t.out()).toContain("fine");
+  expect(t.out()).not.toContain("far-future");
 });
 
 test("without a room directory export prints the no-local-history text", async () => {

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentroomHome, replayQueue, roomDir } from "@agentroom/mcp";
-import { type Envelope, refText } from "@agentroom/protocol";
+import { type Envelope, isoTime, refText } from "@agentroom/protocol";
 import { type CliContext, CliError, resolveRoomId } from "../context.js";
 import { requireHumanTerminal } from "../human.js";
 import { safeBody, safeLine } from "../safe-text.js";
@@ -53,7 +53,7 @@ function render(
       const human = env.from.agent === "human" ? " (human)" : "";
       out.push(
         "",
-        `**seq ${seq}, ${new Date(env.ts).toISOString()}, ${who}${human}, ${env.kind}**`,
+        `**seq ${seq}, ${isoTime(env.ts)}, ${who}${human}, ${env.kind}**`,
         "",
         fenced(
           safeBody(

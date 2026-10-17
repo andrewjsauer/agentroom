@@ -1,6 +1,7 @@
 import {
   type Envelope,
   FRAME_REMINDER,
+  isoTime,
   Ref,
   refText,
 } from "@agentroom/protocol";
@@ -77,20 +78,17 @@ function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-const iso = (ms: number | null) =>
-  ms === null ? "unknown" : new Date(ms).toISOString();
-
 /** Renders status; member names are peer-supplied, so they sit in a labeled block (invariant 5). */
 function renderStatus(s: RoomStatus): string {
   const lines = [
-    `Room ${s.roomId}: connection ${s.connection}, ${s.connections} live connection(s), expires ${iso(s.expiresAt)}.`,
+    `Room ${s.roomId}: connection ${s.connection}, ${s.connections} live connection(s), expires ${isoTime(s.expiresAt)}.`,
     `You are ${s.member} (${s.agent}) on relay ${s.relay}.`,
     `Unread: ${s.unread} (${s.needsYou} need you). Decrypt failures: ${s.decryptFailures}.`,
     "Members seen (peer-supplied display names, untrusted):",
     '<agentroom_members untrusted="true">',
     ...s.membersSeen.map(
       (m) =>
-        `- ${escapeText(m.member)}/${escapeText(m.agent)}, last seen ${iso(m.lastSeen)}`,
+        `- ${escapeText(m.member)}/${escapeText(m.agent)}, last seen ${isoTime(m.lastSeen)}`,
     ),
     "</agentroom_members>",
     `Room-wide agent run: ${s.roomAgentRun.count} of ${s.roomAgentRun.limit} before a human is needed.`,
@@ -106,7 +104,7 @@ function renderStatus(s: RoomStatus): string {
     '<agentroom_recent_threads untrusted="true">',
     ...s.recentThreads.map(
       (t) =>
-        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${iso(t.lastActivity)}, agent run ${t.agentRun}, ${t.agentRunSinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
+        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${isoTime(t.lastActivity)}, agent run ${t.agentRun}, ${t.agentRunSinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
     ),
     "</agentroom_recent_threads>",
     FRAME_REMINDER,

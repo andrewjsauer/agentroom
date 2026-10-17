@@ -5,6 +5,7 @@ import {
   readRoomFile,
   readStatus,
 } from "@agentroom/mcp";
+import { isoTime } from "@agentroom/protocol";
 import { type CliContext, forgetGoneRoom, resolveRoomId } from "../context.js";
 
 export async function status(
@@ -46,7 +47,7 @@ export async function status(
     `Member: ${room.member} (${room.agent})${room.createdByMe ? ", creator" : ""}`,
     `Relay: ${room.relay}`,
     `Connections: ${res.members}`,
-    `Expires: ${new Date(res.expiresAt).toISOString()}`,
+    `Expires: ${isoTime(res.expiresAt)}`,
   ];
   const local = readStatus(home, roomId);
   if (local) {

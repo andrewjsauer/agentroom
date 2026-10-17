@@ -10,6 +10,7 @@ import {
   deriveRoom,
   generateCloseKeyPair,
   generateShareCode,
+  isoTime,
   MAX_AGENT_CHAIN,
   sealMeta,
 } from "@agentroom/protocol";
@@ -44,7 +45,7 @@ function expiryLine(expiresAt: number, maxAge: boolean): string {
     ms < 2 * 3_600_000
       ? `${Math.max(0, Math.round(ms / 60_000))} min`
       : `${hoursUntil(expiresAt)} h`;
-  const iso = new Date(expiresAt).toISOString();
+  const iso = isoTime(expiresAt);
   return maxAge
     ? `Expires in ${left} (${iso}).`
     : `Expires after ${left} without activity (${iso}).`;

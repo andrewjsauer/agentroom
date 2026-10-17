@@ -111,6 +111,20 @@ describe("seal/open", () => {
     await expect(open(blob, key, roomId)).rejects.toThrow(CryptoError);
   });
 
+  test("a sealed envelope with an out-of-range ts fails at the schema step", async () => {
+    await sodium.ready;
+    const nonce = sodium.randombytes_buf(24);
+    const ct = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+      JSON.stringify({ ...env, ts: 1e20 }),
+      roomId,
+      null,
+      nonce,
+      key,
+    );
+    const blob = Buffer.concat([nonce, ct]).toString("base64");
+    await expect(open(blob, key, roomId)).rejects.toThrow(CryptoError);
+  });
+
   test("invariant 1: the blob bytes do not contain the plaintext body", async () => {
     const marker = `PLAINTEXT-MARKER-${"z".repeat(64)}`;
     const blob = await seal({ ...env, body: marker }, key, roomId);

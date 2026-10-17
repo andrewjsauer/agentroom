@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Envelope, RoomMeta } from "../src/index.js";
+import { Envelope, isoTime, MAX_TIME_MS, RoomMeta } from "../src/index.js";
 
 const base = {
   v: 1,
@@ -63,6 +63,37 @@ describe("Envelope", () => {
     expect(JSON.stringify(env)).not.toContain("contents");
     expect(JSON.stringify(env)).not.toContain("secret code");
   });
+});
+
+describe("ts", () => {
+  test.each([
+    ["1e20", 1e20],
+    ["a negative time", -1],
+    ["a fraction", 1.5],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+  ])("rejects %s", (_name, ts) => {
+    expect(Envelope.safeParse({ ...base, ts }).success).toBe(false);
+  });
+
+  test("accepts 0 and the largest Date time", () => {
+    expect(Envelope.parse({ ...base, ts: 0 }).ts).toBe(0);
+    expect(Envelope.parse({ ...base, ts: MAX_TIME_MS }).ts).toBe(MAX_TIME_MS);
+  });
+});
+
+describe("isoTime", () => {
+  test("formats an in-range time", () => {
+    expect(isoTime(0)).toBe("1970-01-01T00:00:00.000Z");
+    expect(isoTime(MAX_TIME_MS)).toBe("+275760-09-13T00:00:00.000Z");
+  });
+
+  test.each([null, undefined, 1e20, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "returns unknown for %s and never throws",
+    (ms) => {
+      expect(isoTime(ms)).toBe("unknown");
+    },
+  );
 });
 
 describe("RoomMeta", () => {
