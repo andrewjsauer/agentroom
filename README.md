@@ -176,6 +176,14 @@ PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agent
 | `CLOSE_GRACE_MS` | `10000` | How long a close-only connection may wait before sending `close` |
 | `HELLO_TIMEOUT_MS` | `10000` | How long a new connection may wait before sending `hello` |
 | `PING_INTERVAL_MS` | `30000` | Keepalive: clients are asked to ping this often; relay-node drops a connection that misses a protocol pong |
+| `MAX_ROOMS` | `1000` | Live rooms on the relay; a create past it is refused (relay-node only) |
+| `MAX_CONNS` | `2000` | Open connections on the relay; more get HTTP 503 (relay-node only) |
+| `MAX_CONNS_PER_IP` | `32` | Open connections from one address across all rooms; more get HTTP 429 (relay-node only) |
+| `MAX_BUFFERED_BYTES` | `268435456` (256 MiB) | Buffered envelopes, meta and close keys across all rooms; past it creates and posts are refused (relay-node only) |
+| `MAX_SEND_BUFFER_BYTES` | `2097152` (2 MiB) | A connection with more unsent output than this is not reading and is dropped (relay-node only) |
+| `EMPTY_ROOM_TTL_SEC` | `900` (15 min) | A room with no member connected for this long is dropped as expired, even within its idle TTL (relay-node only) |
+
+The per-address limits use the TCP peer address. Behind a reverse proxy every client has the proxy's address, so raise `MAX_CONNS_PER_IP`, `MAX_ROOM_CONNS_PER_IP` and the rate limit, or put the per-client limits in the proxy.
 
 The relay speaks plain `ws://`. For `wss://`, put it behind a reverse proxy that terminates TLS and forwards the WebSocket upgrade, for example Caddy (`relay.example.com { reverse_proxy 127.0.0.1:8787 }`) or nginx (`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`). Then point both sides at it with `--relay wss://relay.example.com` or `AGENTROOM_RELAY=wss://relay.example.com`. Rooms live in memory, so a restart ends every room.
 

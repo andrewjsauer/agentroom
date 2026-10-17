@@ -44,7 +44,7 @@ Responsibilities, and nothing else:
 - WebSocket rooms keyed by an opaque `room_id`.
 - Bounded buffer of the last 500 envelopes per room (in memory for `relay-node`, Durable Object storage for `relay-cf`), so late joiners and reconnects catch up.
 - Each envelope gets a relay-assigned monotonically increasing sequence number; clients resume with `since=<seq>`.
-- Idle TTL (default 8 hours) and max age (default 24 hours). Expired rooms are dropped from memory.
+- Idle TTL (default 8 hours) and max age (default 24 hours). Expired rooms are dropped from memory. relay-node also drops a room that has had no member connection for 15 minutes (`EMPTY_ROOM_TTL_SEC`), so abandoned rooms do not hold buffer memory for the full idle TTL; relay-cf keeps them until the idle TTL, since storage is cheap and an idle Durable Object costs nothing.
 - Limits: max envelope size (64 KB ciphertext); a token bucket on `put` per client address per room, shared by that address's connections so reconnecting does not refill it (burst 20, refill 2 per second; over the limit the relay answers `error{rate_limited}`, drops the frame and keeps the connection open, until 20 refusals in a row, after which it closes the connection); max connections per room (default 8, one-shot CLI connections included; a `hello` over the cap gets `room_full` and is closed). A room's max age is `min(create.maxAgeSec ?? 24 h, 24 h)` and `welcome.expiresAt` is the earlier of the idle and max-age deadlines; on expiry each connection gets `error{room_expired}` before it is closed.
 - Presence: broadcasts connection counts only. Display names travel inside encrypted `presence` envelopes, and clients count members by distinct member name from those, since one person may hold several connections (MCP server, `watch`, a one-shot CLI command). The member cap counts connections.
 - Room settings: the creating `hello` carries the idle and max-age TTLs in plaintext (capped at the relay defaults) and an opaque encrypted `meta` blob (room name, `maxAgentChain`). The relay stores both outside the ring buffer and returns `meta` in every `welcome`, so late joiners get the settings even after the buffer has rolled over.
@@ -86,7 +86,7 @@ Wire behavior fixed in milestone 1 (both relays must match it):
 Two implementations share the same protocol and a shared conformance test suite:
 
 - Room rules (frame parsing, create and join decisions, caps, rate limit, envelope size, expiry deadline, tombstone time, nonce, close-signature check) live once in `packages/protocol/src/relay-core.ts`, exported as `@agentroom/protocol/relay-core`. It uses only `zod` and Web platform globals (no Node APIs, `Buffer` or libsodium; a test guards this), so both relays import it.
-- `relay-node`: a ~300-line server for self-hosting and local dev, on the shared core. It verifies `close` with protocol's libsodium `verifyClose`.
+- `relay-node`: a ~550-line server for self-hosting and local dev, on the shared core. It verifies `close` with protocol's libsodium `verifyClose`.
 - `relay-cf`: one Durable Object per room (`idFromName(room_id)`), WebSocket hibernation so idle rooms cost nothing, alarms for expiry. Hibernation evicts in-memory state, so per-connection role, client address, nonce and deadlines live in the socket attachment (the per-address `put` buckets stay in memory: the object hibernates only after 10 s without events, by which time a bucket has refilled), and room state lives in Durable Object storage under three kinds of key: `room` (seq, meta, close key, TTLs, createdAt, lastActivity), `b:<seq, zero-padded to 10>` (one ciphertext blob each, the last 500 kept; a `since` replay reads them 50 per `storage.list` call and stops if the socket goes away) and `tomb` (only the time until which the id is refused). One alarm runs at the earliest of the room's expiry (or the tombstone time) and every socket's deadline (a pending socket's hello deadline, a closer's grace deadline, a member's last frame or auto-answered ping plus 2 minutes), is rewritten only when that time moves, and re-reads storage when it fires. Close and expiry send the frames, close the sockets, call `storage.deleteAll()` and `deleteAlarm()`, then write only `tomb`; the tombstone alarm deletes everything again. Limits come from wrangler `vars` with relay-node's defaults. It verifies `close` with Web Crypto Ed25519 (see Crypto). Public hosted default.
 
 ### Abuse limits
@@ -102,6 +102,12 @@ The public relay-cf instance is the CLI default and its owner pays for its usage
 | `HELLO_TIMEOUT_MS` | 10 000 | per connection, from upgrade to `hello` | both (relay-cf via the alarm) | `bad_proto`, closed |
 | `PING_INTERVAL_MS` | 30 000 | keepalive period, advertised as `welcome.ping` | both; relay-node also protocol-pings and drops a peer that missed a pong | relay-node terminates |
 | `MEMBER_IDLE_MS` | 120 000 | member with no frame and no `ping` | relay-cf alarm | closed with 1001, `presence` to the rest |
+| `MAX_ROOMS` | 1000 | live rooms per relay | relay-node | `room_full` on create |
+| `MAX_CONNS` | 2000 | open connections per relay | relay-node, at upgrade | HTTP 503 |
+| `MAX_CONNS_PER_IP` | 32 | open connections per address, all rooms | relay-node, at upgrade | HTTP 429 |
+| `MAX_BUFFERED_BYTES` | 256 MiB | buffered blobs, meta and close keys, all rooms | relay-node | `room_full` on create, `rate_limited` on put |
+| `MAX_SEND_BUFFER_BYTES` | 2 MiB | a connection's unsent output (`ws.bufferedAmount`) | relay-node; `since` replay pauses at half of it and waits for the socket to drain | terminated |
+| `EMPTY_ROOM_TTL_SEC` | 900 | room with no member connection | relay-node sweep | dropped as expired (`room_expired`, tombstoned) |
 | `MAX_REFUSALS` (constant) | 20 | consecutive refused `put`s (`rate_limited`, `too_large`) per connection | both | the 20th error is followed by a close |
 | `MAX_FRAME_BYTES` (constant) | 96 KiB | one WebSocket frame; relay-cf checks the string length before encoding it | both | relay-node: `ws` closes with 1009; relay-cf: closed with 1009 |
 

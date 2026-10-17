@@ -32,6 +32,12 @@ const relay = await startRelay({
   closeGraceMs: num("CLOSE_GRACE_MS"),
   helloTimeoutMs: num("HELLO_TIMEOUT_MS"),
   pingIntervalMs: num("PING_INTERVAL_MS"),
+  maxRooms: num("MAX_ROOMS"),
+  maxConns: num("MAX_CONNS"),
+  maxConnsPerIp: num("MAX_CONNS_PER_IP"),
+  maxBufferedBytes: num("MAX_BUFFERED_BYTES"),
+  maxSendBufferBytes: num("MAX_SEND_BUFFER_BYTES"),
+  emptyRoomTtlSec: num("EMPTY_ROOM_TTL_SEC"),
 });
 process.stderr.write(`agentroom relay listening on port ${relay.port}\n`);
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

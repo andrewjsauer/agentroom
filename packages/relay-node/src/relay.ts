@@ -47,9 +47,34 @@ export interface RelayOptions {
   helloTimeoutMs?: number;
   /** Ping every connection this often; one that missed the last pong is dropped (default 30 s). */
   pingIntervalMs?: number;
+  /** Live rooms on this relay; a create past it gets `room_full` (default 1000). */
+  maxRooms?: number;
+  /** Open connections on this relay; an upgrade past it gets HTTP 503 (default 2000). */
+  maxConns?: number;
+  /** Open connections from one address; an upgrade past it gets HTTP 429 (default 32). */
+  maxConnsPerIp?: number;
+  /**
+   * Bytes of buffered envelopes, meta and close keys across all rooms (string length). Past it,
+   * creates get `room_full` and puts `rate_limited` (default 256 MiB).
+   */
+  maxBufferedBytes?: number;
+  /** A connection whose unsent output exceeds this is terminated (default 2 MiB). */
+  maxSendBufferBytes?: number;
+  /** A room with no member connection for this long is dropped as expired (default 15 min). */
+  emptyRoomTtlSec?: number;
   now?: () => number;
   log?: (event: RelayEvent) => void;
 }
+
+/** relay-node's own caps, on top of the shared room limits. */
+export const NODE_DEFAULTS = {
+  maxRooms: 1000,
+  maxConns: 2000,
+  maxConnsPerIp: 32,
+  maxBufferedBytes: 256 * 1024 * 1024,
+  maxSendBufferBytes: 2 * 1024 * 1024,
+  emptyRoomTtlSec: 900,
+};
 
 export interface RoomSnapshot {
   roomId: string;
@@ -79,6 +104,10 @@ interface Room {
   closers: Set<WebSocket>;
   /** `put` token buckets by client address. */
   rates: Map<string, RateState>;
+  /** Counted against maxBufferedBytes: buffered blobs, meta and close key. */
+  bytes: number;
+  /** Since when no member has been connected; undefined while one is. */
+  emptySince?: number;
 }
 
 interface Conn {
@@ -93,6 +122,8 @@ interface Conn {
   alive: boolean;
   /** Consecutive refused puts. */
   refusals: number;
+  /** Replaying `since`: live `msg`s reach it through the replay cursor, not broadcast. */
+  replaying: boolean;
 }
 
 function defaultLog(event: RelayEvent): void {
@@ -115,6 +146,16 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     helloTimeoutMs: opts.helloTimeoutMs ?? d.helloTimeoutMs,
     pingIntervalMs: opts.pingIntervalMs ?? d.pingIntervalMs,
   };
+  const caps = {
+    maxRooms: opts.maxRooms ?? NODE_DEFAULTS.maxRooms,
+    maxConns: opts.maxConns ?? NODE_DEFAULTS.maxConns,
+    maxConnsPerIp: opts.maxConnsPerIp ?? NODE_DEFAULTS.maxConnsPerIp,
+    maxBufferedBytes: opts.maxBufferedBytes ?? NODE_DEFAULTS.maxBufferedBytes,
+    maxSendBufferBytes:
+      opts.maxSendBufferBytes ?? NODE_DEFAULTS.maxSendBufferBytes,
+    emptyRoomTtlMs:
+      (opts.emptyRoomTtlSec ?? NODE_DEFAULTS.emptyRoomTtlSec) * 1000,
+  };
   const now = opts.now ?? Date.now;
   const log = opts.log ?? defaultLog;
   const host = opts.host ?? "127.0.0.1";
@@ -122,6 +163,10 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   /** Closed or expired room ids, remembered until createdAt + maxAge (KTD7). */
   const tombstones = new Map<string, number>();
   const conns = new Map<WebSocket, Conn>();
+  /** Open connections per address, counted from upgrade to close. */
+  const perIp = new Map<string, number>();
+  /** Sum of every room's `bytes`. */
+  let bufferedBytes = 0;
   let accepting = true;
 
   const wss = new WebSocketServer({
@@ -132,6 +177,13 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       if (!accepting) return done(false);
       // Real clients are Node processes and send no Origin; a browser page always does.
       if (info.origin) return done(false, 403, "browser origins are refused");
+      if (conns.size >= caps.maxConns) {
+        return done(false, 503, "relay is at its connection cap");
+      }
+      const ip = info.req.socket.remoteAddress ?? "";
+      if ((perIp.get(ip) ?? 0) >= caps.maxConnsPerIp) {
+        return done(false, 429, "too many connections from your address");
+      }
       done(true);
     },
   });
@@ -140,8 +192,39 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     wss.once("error", reject);
   });
 
-  const send = (ws: WebSocket, frame: RelayFrame) =>
+  /** Send, or terminate a peer that is not reading: its unsent output would grow without bound. */
+  const send = (ws: WebSocket, frame: RelayFrame) => {
+    if (ws.bufferedAmount > caps.maxSendBufferBytes) {
+      ws.terminate();
+      return;
+    }
     ws.send(JSON.stringify(frame));
+  };
+
+  /**
+   * Replay buffered envelopes after `since` without flooding the socket: past half the send
+   * cap, wait for the kernel to take the last frame. Puts that land meanwhile are appended to
+   * the buffer and picked up by the cursor, so order holds.
+   */
+  const replay = (ws: WebSocket, conn: Conn, room: Room, since: number) => {
+    conn.replaying = true;
+    let cursor = since;
+    const pump = () => {
+      while (ws.readyState === ws.OPEN && conn.room === room) {
+        const next = room.state.buffer.find((e) => e.seq > cursor);
+        if (!next) break;
+        cursor = next.seq;
+        const data = JSON.stringify({ t: "msg", ...next });
+        if (ws.bufferedAmount + data.length > caps.maxSendBufferBytes / 2) {
+          ws.send(data, () => pump());
+          return;
+        }
+        ws.send(data);
+      }
+      conn.replaying = false;
+    };
+    pump();
+  };
 
   const fail = (
     ws: WebSocket,
@@ -159,6 +242,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   /** Drop a room, send `frame` to every connection, close them, and tombstone the id. */
   const drop = (id: string, room: Room, frame: RelayFrame) => {
     rooms.delete(id);
+    bufferedBytes -= room.bytes;
     tombstones.set(id, tombstoneUntil(room.state));
     for (const c of [...room.conns, ...room.closers]) {
       send(c, frame);
@@ -188,13 +272,25 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   };
 
   const broadcast = (room: Room, frame: RelayFrame, except?: WebSocket) => {
-    for (const c of room.conns) if (c !== except) send(c, frame);
+    for (const c of room.conns) {
+      if (c === except) continue;
+      if (frame.t === "msg" && conns.get(c)?.replaying) continue;
+      send(c, frame);
+    }
+  };
+
+  const addBytes = (room: Room, n: number) => {
+    room.bytes += n;
+    bufferedBytes += n;
   };
 
   const put = (room: Room, blob: string) => {
     const seq = applyPut(room.state, now());
     room.state.buffer.push({ seq, blob });
-    if (room.state.buffer.length > limits.bufferSize) room.state.buffer.shift();
+    addBytes(room, blob.length);
+    if (room.state.buffer.length > limits.bufferSize) {
+      addBytes(room, -(room.state.buffer.shift()?.blob.length ?? 0));
+    }
     broadcast(room, { t: "msg", seq: room.state.seq, blob });
   };
 
@@ -218,12 +314,22 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       return;
     }
     if (decision.created) {
+      if (rooms.size >= caps.maxRooms) {
+        fail(ws, "room_full", "relay is at its room cap; try again later");
+        return;
+      }
+      if (bufferedBytes >= caps.maxBufferedBytes) {
+        fail(ws, "room_full", "relay is out of buffer space; try again later");
+        return;
+      }
       room = {
         state: { ...decision.created, buffer: [] },
         conns: new Set(),
         closers: new Set(),
         rates: new Map(),
+        bytes: 0,
       };
+      addBytes(room, room.state.meta.length + room.state.closeKey.length);
       rooms.set(hello.room, room);
       log({ event: "room_created", room: hello.room });
     }
@@ -239,6 +345,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     } else {
       room.state.lastActivity = now();
       room.conns.add(ws);
+      room.emptySince = undefined;
     }
     send(ws, {
       t: "welcome",
@@ -253,11 +360,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       log({ event: "closer_open", room: hello.room });
       return;
     }
-    if (hello.since !== undefined) {
-      for (const e of room.state.buffer) {
-        if (e.seq > hello.since) send(ws, { t: "msg", ...e });
-      }
-    }
+    if (hello.since !== undefined) replay(ws, conn, room, hello.since);
     broadcast(room, { t: "presence", members: room.conns.size }, ws);
     log({ event: "conn_open", room: hello.room, members: room.conns.size });
   };
@@ -286,6 +389,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       closeOnly: false,
       alive: true,
       refusals: 0,
+      replaying: false,
       helloTimer: setTimeout(
         () => fail(ws, "bad_proto", "no hello in time"),
         limits.helloTimeoutMs,
@@ -293,6 +397,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     };
     conn.helloTimer?.unref();
     conns.set(ws, conn);
+    perIp.set(conn.ip, (perIp.get(conn.ip) ?? 0) + 1);
     let greeted = false;
     ws.on("error", () => {});
     ws.on("pong", () => {
@@ -334,7 +439,17 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       if (!room || liveRoom(room.state.roomId) !== room) return;
       const t = now();
       const rate = rateFor(room.rates, conn.ip, t, limits);
-      const admit = admitPut(rate, frame.blob, t, limits);
+      let admit = admitPut(rate, frame.blob, t, limits);
+      if (
+        admit.ok &&
+        bufferedBytes + frame.blob.length > caps.maxBufferedBytes
+      ) {
+        admit = {
+          ok: false,
+          code: "rate_limited",
+          message: "relay is out of buffer space; try again later",
+        };
+      }
       if (!admit.ok) {
         conn.refusals += 1;
         fail(ws, admit.code, admit.message, conn.refusals >= MAX_REFUSALS);
@@ -345,11 +460,15 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     });
     ws.on("close", () => {
       conns.delete(ws);
+      const left = (perIp.get(conn.ip) ?? 1) - 1;
+      if (left > 0) perIp.set(conn.ip, left);
+      else perIp.delete(conn.ip);
       clearTimeout(conn.graceTimer);
       clearTimeout(conn.helloTimer);
       const room = conn.room;
       room?.closers.delete(ws);
       if (!room?.conns.delete(ws)) return;
+      if (room.conns.size === 0) room.emptySince = now();
       broadcast(room, { t: "presence", members: room.conns.size });
       log({
         event: "conn_close",
@@ -362,7 +481,10 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
   const sweep = setInterval(() => {
     const t = now();
     for (const [id, room] of rooms) {
-      if (t >= expiresAt(room)) expire(id, room);
+      const abandoned =
+        room.emptySince !== undefined &&
+        t - room.emptySince >= caps.emptyRoomTtlMs;
+      if (t >= expiresAt(room) || abandoned) expire(id, room);
     }
     for (const [id, until] of tombstones) {
       if (t >= until) tombstones.delete(id);
