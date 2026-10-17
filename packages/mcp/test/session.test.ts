@@ -6,10 +6,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { seal, ulid } from "@agentroom/protocol";
 import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   createRoomSession,
+  HISTORY_MAX,
+  INBOX_BUDGET,
+  QUEUE_COMPACT_RECORDS,
   ROOM_EXPIRED_TEXT,
   type RoomSession,
   readCurrent,
@@ -20,6 +24,7 @@ import {
 } from "../src/index.js";
 import {
   createTestRoom,
+  injectHuman,
   makeHome,
   removeHome,
   sleep,
@@ -220,6 +225,148 @@ test("wait resolves with the expiry result when the room expires mid-wait", asyn
   clock += 11_000;
   expect(await pending).toBe(ROOM_EXPIRED_TEXT);
 });
+
+test("a persisted message with an out-of-range ts is skipped on restart; status still renders", async () => {
+  const { home, session } = await pair();
+  session.close();
+  const env = {
+    v: 1,
+    id: "01FARFUTURE000000000000000",
+    ts: 1e20,
+    from: { member: "eve", agent: "codex", via: "mcp" },
+    kind: "fyi",
+    thread: "01FARFUTURE000000000000000",
+    body: "far-future",
+    refs: [],
+    requiresHuman: false,
+  };
+  writeFileSync(
+    join(roomDir(home, room.roomId), "queue.jsonl"),
+    `${JSON.stringify({ t: "msg", seq: 50, env, own: false })}\n`,
+    { flag: "a" },
+  );
+  const again = createRoomSession({
+    roomId: room.roomId,
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(again);
+  await until(() => again.status().connection === "live", 5000, "live");
+  const s = again.status();
+  expect(s.membersSeen.some((m) => m.member === "eve")).toBe(false);
+  expect(again.inbox()).not.toContain("far-future");
+});
+
+test("inbox returns whole messages within the budget, marks only those read, and says how many remain", async () => {
+  const { session, b } = await pair();
+  const bodies = ["a", "b", "c", "d", "e"].map(
+    (c) => `${c}:${c.repeat(3_000)}`,
+  );
+  for (const body of bodies) await b.session.send({ kind: "fyi", body });
+  await until(() => session.status().unread === 5, 5000, "five unread");
+
+  const first = session.inbox();
+  expect(first.length).toBeLessThanOrEqual(INBOX_BUDGET);
+  expect(first).toContain(bodies[0]);
+  expect(first).toContain(bodies[1]);
+  expect(first).not.toContain("c:ccc");
+  expect(first).toContain("3 more unread. Call inbox again to read the rest.");
+  expect(session.status().unread).toBe(3);
+
+  const seen = [first];
+  while (session.status().unread > 0) seen.push(session.inbox());
+  const all = seen.join("\n");
+  for (const body of bodies) expect(all.split(body).length).toBe(2);
+  for (const text of seen)
+    expect(text.length).toBeLessThanOrEqual(INBOX_BUDGET);
+});
+
+test("inbox returns one message whole even when it alone is over the budget", async () => {
+  const { session, b } = await pair();
+  const refs = Array.from({ length: 20 }, (_, i) => ({
+    repo: "r".repeat(128),
+    path: `${i}/${"p".repeat(500)}`,
+  }));
+  const body = "z".repeat(8_000);
+  await b.session.send({ kind: "fyi", body, refs });
+  await b.session.send({ kind: "fyi", body: "second" });
+  await until(() => session.status().unread === 2, 5000, "two unread");
+  const text = session.inbox();
+  expect(text.length).toBeGreaterThan(INBOX_BUDGET);
+  expect(text).toContain(body);
+  expect(text).toContain(`19/${"p".repeat(500)}`);
+  expect(text).not.toContain("second");
+  expect(text).toContain("1 more unread.");
+  expect(await session.wait(1)).toContain("second");
+});
+
+test("a synthetic flood keeps history and queue.jsonl bounded and holds the room ceiling", async () => {
+  const { home, session } = await pair();
+  const flood = 2 * QUEUE_COMPACT_RECORDS + 500;
+  for (let i = 0; i < flood; i++) {
+    const id = ulid();
+    relay.inject(
+      room.roomId,
+      await seal(
+        {
+          v: 1,
+          id,
+          ts: Date.now(),
+          from: { member: "eve", agent: "codex", via: "mcp" },
+          kind: "presence",
+          thread: id,
+          body: "",
+        },
+        room.key,
+        room.roomId,
+      ),
+    );
+  }
+  const head = flood + 2;
+  await until(
+    () => (readStatus(home, room.roomId)?.lastSeq ?? 0) >= head,
+    60_000,
+    "flood processed",
+  );
+  const lines = readFileSync(
+    join(roomDir(home, room.roomId), "queue.jsonl"),
+    "utf8",
+  )
+    .split("\n")
+    .filter(Boolean);
+  // Compacted at each 5,000 records of growth: the kept window plus what arrived since.
+  expect(lines.length).toBeLessThan(HISTORY_MAX + 1_000);
+  expect(lines.some((l) => l.startsWith('{"t":"seen"'))).toBe(true);
+  // Presence is not counted, but the cap cut messages posted since the user's last own message.
+  await expect(session.send({ kind: "fyi", body: "x" })).rejects.toThrow(
+    "This room needs your user.",
+  );
+  session.close();
+
+  const again = createRoomSession({
+    roomId: room.roomId,
+    env: { AGENTROOM_HOME: home, AGENTROOM_NOTIFY: "off" },
+    backoff: { initialMs: 5, maxMs: 20 },
+  });
+  sessions.push(again);
+  await until(() => again.status().connection === "live", 5000, "live");
+  await expect(again.send({ kind: "fyi", body: "x" })).rejects.toThrow(
+    "This room needs your user.",
+  );
+  await injectHuman(relay, room, {
+    kind: "approve",
+    thread: "01ANYTHREAD000000000000000",
+    localHome: home,
+  });
+  await until(
+    () => again.status().sinceYourLastPost.room.count === 0,
+    5000,
+    "own human message",
+  );
+  await expect(again.send({ kind: "fyi", body: "x" })).resolves.toMatchObject({
+    seq: expect.any(Number),
+  });
+}, 120_000);
 
 test("status.json mirrors status() after an exchange", async () => {
   const { home, session, b } = await pair();

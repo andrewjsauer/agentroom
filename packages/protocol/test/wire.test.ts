@@ -93,6 +93,18 @@ describe("RelayFrame", () => {
   });
 });
 
+test("welcome.expiresAt must be a whole ms time a Date can format", () => {
+  const welcome = { t: "welcome", seq: 0, members: 1, nonce: "n", meta: "m" };
+  for (const bad of [1e20, -1, 1.5, Number.POSITIVE_INFINITY]) {
+    expect(RelayFrame.safeParse({ ...welcome, expiresAt: bad }).success).toBe(
+      false,
+    );
+  }
+  expect(RelayFrame.parse({ ...welcome, expiresAt: 8.64e15 })).toMatchObject({
+    expiresAt: 8.64e15,
+  });
+});
+
 test("hello accepts closeOnly: true and rejects other values", async () => {
   const { HelloFrame } = await import("../src/index.js");
   const base = { t: "hello", room: "a".repeat(64), proto: 1 };

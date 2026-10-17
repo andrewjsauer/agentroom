@@ -97,3 +97,16 @@ export function notificationText(env: Envelope): {
     .slice(0, PREVIEW_CHARS);
   return { title, text };
 }
+
+/** One message reads as `notificationText`; several coalesce into a count and the latest preview. */
+export function batchNotificationText(envs: Envelope[]): {
+  title: string;
+  text: string;
+} {
+  const latest = notificationText(envs[envs.length - 1] as Envelope);
+  if (envs.length === 1) return latest;
+  return {
+    title: `agentroom: ${envs.length} new messages need you`,
+    text: latest.text,
+  };
+}

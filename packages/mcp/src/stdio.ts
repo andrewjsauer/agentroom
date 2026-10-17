@@ -2,7 +2,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { agentroomHome } from "./paths.js";
 import { createMcpServer, createNoRoomServer } from "./server.js";
 import { createRoomSession, type RoomSession } from "./session.js";
-import { roomExists } from "./state.js";
+import { roomExists, sweepExpiredRooms } from "./state.js";
 
 /** The room to serve: the requested one when its room.json exists, else none (KTD4). */
 export function roomToServe(
@@ -15,7 +15,8 @@ export function roomToServe(
 }
 
 /**
- * Serve the room over stdio, or the no-room stub when there is no room to serve. Throws before
+ * Sweep expired room dirs, then serve the room over stdio, or the no-room stub when there is no
+ * room to serve. Throws before
  * touching stdout when room.json is invalid. Resolves once stdin ends, after the relay
  * connection and timers are released, so the caller can exit.
  */
@@ -23,6 +24,7 @@ export function runStdio(opts: {
   roomId: string | undefined;
   env: NodeJS.ProcessEnv;
 }): Promise<void> {
+  sweepExpiredRooms(agentroomHome(opts.env));
   const roomId = roomToServe(opts.roomId, opts.env);
   let session: RoomSession | undefined;
   if (roomId !== undefined)

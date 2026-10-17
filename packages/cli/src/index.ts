@@ -1,3 +1,4 @@
+import { agentroomHome, sweepExpiredRooms } from "@agentroom/mcp";
 import { parseCli, USAGE } from "./args.js";
 import { approve } from "./commands/approve.js";
 import { down } from "./commands/down.js";
@@ -30,6 +31,10 @@ export async function main(argv: string[], ctx: CliContext): Promise<number> {
       parsed = parseCli(argv);
     } catch (err) {
       throw new CliError(err instanceof Error ? err.message : String(err), 2);
+    }
+    if (parsed.command !== "help" && parsed.command !== "version") {
+      // Local room data (secret, decrypted queue) does not outlive the room by more than an hour.
+      sweepExpiredRooms(agentroomHome(ctx.env));
     }
     switch (parsed.command) {
       case "help":

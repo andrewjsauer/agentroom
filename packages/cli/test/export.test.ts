@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdtempSync,
@@ -10,7 +11,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { appendQueue, setCurrent, writeRoomFile } from "@agentroom/mcp";
+import {
+  appendQueue,
+  setCurrent,
+  writeRoomFile,
+  writeStatus,
+} from "@agentroom/mcp";
 import { type Envelope, Envelope as EnvelopeSchema } from "@agentroom/protocol";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { main } from "../src/index.js";
@@ -212,6 +218,48 @@ test("an agent marker or a non-TTY stdin refuses and writes nothing", async () =
   expect(await main(["export"], pipe.ctx)).toBe(1);
   expect(pipe.out()).toBe("");
   expect(readdirSync(tmp)).toEqual([]);
+});
+
+test("a queue line with an out-of-range ts from an older version does not break export", async () => {
+  const env = add({ thread: "T", body: "fine" });
+  appendFileSync(
+    join(home, "rooms", ROOM, "queue.jsonl"),
+    `${JSON.stringify({ t: "msg", seq: 99, env: { ...env, id: "bad", ts: 1e20, body: "far-future" }, own: false })}\n`,
+  );
+  const t = tty();
+  expect(await main(["export"], t.ctx)).toBe(0);
+  expect(t.out()).toContain("fine");
+  expect(t.out()).not.toContain("far-future");
+});
+
+test("export works within the grace hour after expiry; later any command sweeps the room dir", async () => {
+  add({ thread: "T", body: "kept-for-export" });
+  const status = {
+    connection: "live" as const,
+    connections: 1,
+    members: [],
+    unread: 0,
+    needsYou: 0,
+    decryptFailures: 0,
+    lastSeq: 1,
+    updatedAt: 0,
+  };
+  writeStatus(home, ROOM, { ...status, expiresAt: Date.now() - 60_000 });
+  const t = tty();
+  expect(await main(["export"], t.ctx)).toBe(0);
+  expect(t.out()).toContain("kept-for-export");
+
+  writeStatus(home, ROOM, {
+    ...status,
+    expiresAt: Date.now() - 2 * 3_600_000,
+  });
+  const after = tty();
+  await main(["sync-mode"], after.ctx); // Any command but help and version sweeps first.
+  expect(existsSync(join(home, "rooms", ROOM))).toBe(false);
+  expect(existsSync(join(home, "current"))).toBe(false);
+  const again = tty();
+  expect(await main(["export"], again.ctx)).toBe(1);
+  expect(again.err()).toContain("No local history for this room");
 });
 
 test("without a room directory export prints the no-local-history text", async () => {

@@ -1,8 +1,10 @@
 import {
   type Envelope,
   FRAME_REMINDER,
+  isoTime,
   Ref,
   refText,
+  stripControl,
 } from "@agentroom/protocol";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -77,20 +79,17 @@ function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-const iso = (ms: number | null) =>
-  ms === null ? "unknown" : new Date(ms).toISOString();
-
 /** Renders status; member names are peer-supplied, so they sit in a labeled block (invariant 5). */
 function renderStatus(s: RoomStatus): string {
   const lines = [
-    `Room ${s.roomId}: connection ${s.connection}, ${s.connections} live connection(s), expires ${iso(s.expiresAt)}.`,
+    `Room ${s.roomId}: connection ${s.connection}, ${s.connections} live connection(s), expires ${isoTime(s.expiresAt)}.`,
     `You are ${s.member} (${s.agent}) on relay ${s.relay}.`,
     `Unread: ${s.unread} (${s.needsYou} need you). Decrypt failures: ${s.decryptFailures}.`,
     "Members seen (peer-supplied display names, untrusted):",
     '<agentroom_members untrusted="true">',
     ...s.membersSeen.map(
       (m) =>
-        `- ${escapeText(m.member)}/${escapeText(m.agent)}, last seen ${iso(m.lastSeen)}`,
+        `- ${escapeText(m.member)}/${escapeText(m.agent)}, last seen ${isoTime(m.lastSeen)}`,
     ),
     "</agentroom_members>",
     `Room-wide agent run: ${s.roomAgentRun.count} of ${s.roomAgentRun.limit} before a human is needed.`,
@@ -106,7 +105,7 @@ function renderStatus(s: RoomStatus): string {
     '<agentroom_recent_threads untrusted="true">',
     ...s.recentThreads.map(
       (t) =>
-        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${iso(t.lastActivity)}, agent run ${t.agentRun}, ${t.agentRunSinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
+        `- ${escapeText(t.thread)}: ${t.rootKind} from ${escapeText(t.rootMember)}/${escapeText(t.rootAgent)}, ${t.messages} message(s), last active ${isoTime(t.lastActivity)}, agent run ${t.agentRun}, ${t.agentRunSinceYou} of ${s.sinceYourLastPost.threadLimit} since your user last posted${t.waitingOnHuman ? " (waiting on a human)" : ""}. Root: "${escapeText(t.preview)}"`,
     ),
     "</agentroom_recent_threads>",
     FRAME_REMINDER,
@@ -114,10 +113,16 @@ function renderStatus(s: RoomStatus): string {
   return lines.join("\n");
 }
 
-/** The agent's own draft as plain text, with the release hash (KTD16). */
+/** Strip control characters and cap length, as chain refusals do for ids. */
+const safeId = (id: string) => stripControl(id).slice(0, 64);
+
+/**
+ * The agent's own draft as plain text, with the release hash (KTD16). The thread id can come
+ * from a peer's message (a reply inherits it), so it is shown through `safeId`.
+ */
 function renderDraft(env: Envelope, hash: string): string {
   const lines = [
-    `Draft ${hash} (not sent): ${env.kind} in thread ${env.thread}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
+    `Draft ${hash} (not sent): ${env.kind} in thread ${safeId(env.thread)}${env.to ? ` to ${env.to}` : ""}${env.requiresHuman ? ", requires a human" : ""}.`,
     env.body,
     ...env.refs.map((r) => `refs: ${refText(r)}`),
     `Nothing was posted. Show this draft to your user verbatim; they release it by typing /agentroom:send ${hash} in Claude Code.`,
@@ -224,7 +229,7 @@ export function createMcpServer(session: RoomSession): McpServer {
   server.registerTool(
     "inbox",
     {
-      description: `Return unread messages (oldest first, up to limit, optionally one thread) and mark them read. ${UNTRUSTED_NOTE}`,
+      description: `Return unread messages (oldest first, up to limit and about 9,000 characters, optionally one thread) and mark only those read; it says how many remain. ${UNTRUSTED_NOTE}`,
       inputSchema: InboxInput,
     },
     async (args) => text(session.inbox(args)),

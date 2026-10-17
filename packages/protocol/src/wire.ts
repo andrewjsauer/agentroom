@@ -57,7 +57,8 @@ export const WelcomeFrame = z.object({
   t: z.literal("welcome"),
   seq: Seq,
   members: z.number().int().nonnegative(),
-  expiresAt: z.number(),
+  /** Bounded so every client can format it as a date. */
+  expiresAt: z.number().int().min(0).max(8.64e15),
   nonce: z.string(),
   meta: z.string(),
   /**

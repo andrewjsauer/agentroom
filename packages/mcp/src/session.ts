@@ -1,8 +1,15 @@
-import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   assertNoSecrets,
+  type ChainRefusal,
   type ChainState,
   chainRefusalText,
   chainState,
@@ -22,7 +29,11 @@ import {
   ulid,
   waitingThreads,
 } from "@agentroom/protocol";
-import { createNotifier, type Notifier, notificationText } from "./notify.js";
+import {
+  batchNotificationText,
+  createNotifier,
+  type Notifier,
+} from "./notify.js";
 import { agentroomHome, roomDir } from "./paths.js";
 import { writePending } from "./pending.js";
 import {
@@ -35,12 +46,19 @@ import {
   type AgentName,
   appendQueue,
   clearCurrentIf,
+  compactQueue,
   deleteRoomDir,
+  HISTORY_MAX,
+  isHuman,
+  QUEUE_COMPACT_BYTES,
+  QUEUE_COMPACT_RECORDS,
   type QueueRecord,
   type RoomFile,
   readQueueTail,
   readRoomFile,
   replayQueue,
+  type StoredMessage,
+  trimHistory,
   writeStatus,
 } from "./state.js";
 
@@ -55,9 +73,20 @@ const DEFAULT_LIMIT = 20;
 const MAX_NAME_CHARS = 64;
 const DEFAULT_MAX_AGENT_CHAIN = 3;
 const EXTERNAL_READ_MS = 2_000;
+/** At most one desktop notification per room in this window (KTD16). */
+const NOTIFY_INTERVAL_MS = 10_000;
 const ROOM_NAME_CHARS = 32;
 const RECENT_THREADS = 10;
 const PREVIEW_CHARS = 80;
+/**
+ * Character budget for one inbox or wait result: the same number as the prompt hook's
+ * CONTEXT_BUDGET (packages/cli/src/hook/submit.ts), so no client-side cut drops a message
+ * that was already marked read.
+ */
+export const INBOX_BUDGET = 9_000;
+
+const moreText = (n: number) =>
+  `${n} more unread. Call inbox again to read the rest.`;
 
 /** Non-terminal relay errors fail the oldest in-flight send with these texts (KTD13). */
 const RELAY_ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -143,8 +172,6 @@ function buildFrom(
   return { member: room.member, agent: room.agent, via };
 }
 
-const isHuman = (env: Envelope) => (env.from.agent as string) === "human";
-
 /** Invariant 2 runtime guard, applied to every post and draft. */
 function refuseHuman(env: Envelope): void {
   if (isHuman(env)) {
@@ -180,17 +207,35 @@ export function createRoomSession(opts: {
   externalReadMs?: number;
   /** Desktop notifier; defaults to the platform's (KTD16). */
   notify?: Notifier;
+  /** Minimum time between notifications for this room; 10 s by default. */
+  notifyIntervalMs?: number;
 }): RoomSession {
   const home = agentroomHome(opts.env);
   const roomId = opts.roomId;
   const room = readRoomFile(home, roomId);
   const { key } = deriveRoom(parseShareCode(room.secret));
   const replay = replayQueue(home, roomId);
-  const history = replay.history;
+  /** Envelope ids posted from this machine: own echoes are decided by id, not member name. */
+  const localIds = replay.sentIds;
   const seen = replay.seen;
   const unread = replay.unread;
+  let history: StoredMessage[] = [];
+  /** Trimming dropped messages since the last local human message (see trimHistory). */
+  let cut = replay.cut;
+  const trim = (all: StoredMessage[]) => {
+    const t = trimHistory(all, localIds);
+    const kept = new Set(t.kept.map((m) => m.env.id));
+    for (const m of all) if (!kept.has(m.env.id)) unread.delete(m.env.id);
+    history = t.kept;
+    cut ||= t.cut;
+  };
+  trim(replay.history);
   let lastSeq = replay.lastSeq;
   let queueBytes = replay.bytes;
+  let queueIno = replay.ino;
+  /** Growth since the last compaction; the whole file counts at start. */
+  let grownRecords = replay.records;
+  let grownBytes = replay.bytes;
   let roomName: string | undefined;
   /** Head seq of the first welcome; only messages above it are live enough to notify. */
   let liveAfter: number | undefined;
@@ -214,12 +259,14 @@ export function createRoomSession(opts: {
   let closed = false;
   let finalReadDone = false;
   let presenceSent = false;
+  /** Claimed needs-you messages waiting for the next notification slot. */
+  let toNotify: Envelope[] = [];
+  let notifyTimer: NodeJS.Timeout | undefined;
+  const notifyIntervalMs = opts.notifyIntervalMs ?? NOTIFY_INTERVAL_MS;
   const pendingEcho = new Map<
     string,
     { resolve(seq: number): void; reject(err: Error): void }
   >();
-  /** Envelope ids posted from this machine: own echoes are decided by id, not member name. */
-  const localIds = replay.sentIds;
   const waiters = new Set<() => void>();
   let sendChain: Promise<unknown> = Promise.resolve();
 
@@ -298,6 +345,30 @@ export function createRoomSession(opts: {
       });
   };
 
+  /** The room-wide ceiling count, at least the limit once trimming cut messages it counts. */
+  const ceilingRoomCount = (chain: ChainState) =>
+    cut
+      ? Math.max(chain.ceilingRoom, 2 * threadCeiling(maxAgentChain))
+      : chain.ceilingRoom;
+
+  /**
+   * After trimming dropped messages posted since the last local human message (over HISTORY_MAX
+   * of them), the ceiling counts over the kept window may be short: refuse as the room ceiling.
+   */
+  const cutRefusal = (
+    chain: ChainState,
+    thread: string,
+  ): ChainRefusal | undefined =>
+    cut
+      ? {
+          scope: "room",
+          ceiling: true,
+          count: ceilingRoomCount(chain),
+          limit: 2 * threadCeiling(maxAgentChain),
+          thread,
+        }
+      : undefined;
+
   /** Full status for `room_status`; the only caller that pays for the chain scan. */
   const status = (): RoomStatus => {
     const chain = chainState(ordered(), maxAgentChain, localIds);
@@ -318,7 +389,7 @@ export function createRoomSession(opts: {
       roomAgentRun: { count: chain.room, limit: 2 * maxAgentChain },
       sinceYourLastPost: {
         room: {
-          count: chain.ceilingRoom,
+          count: ceilingRoomCount(chain),
           limit: 2 * threadCeiling(maxAgentChain),
         },
         threadLimit: threadCeiling(maxAgentChain),
@@ -346,12 +417,41 @@ export function createRoomSession(opts: {
   /** Apply `read` and `sent` records other processes (the prompt hook, the CLI) appended. */
   const syncExternalReads = () => {
     if (gone) return;
-    const tail = readQueueTail(home, roomId, queueBytes);
+    const tail = readQueueTail(home, roomId, queueBytes, queueIno);
     queueBytes = tail.bytes;
+    queueIno = tail.ino;
     for (const id of tail.sentIds) localIds.add(id);
     let changed = false;
     for (const id of tail.readIds) changed = unread.delete(id) || changed;
     if (changed) persistStatus();
+  };
+
+  const append = (records: QueueRecord[]) => {
+    grownBytes += appendQueue(home, roomId, records);
+    grownRecords += records.length;
+  };
+
+  /** Rewrite queue.jsonl once it has grown by QUEUE_COMPACT_RECORDS or QUEUE_COMPACT_BYTES. */
+  const maybeCompact = () => {
+    if (gone) return;
+    if (
+      grownRecords < QUEUE_COMPACT_RECORDS &&
+      grownBytes < QUEUE_COMPACT_BYTES
+    ) {
+      return;
+    }
+    syncExternalReads();
+    const r = compactQueue(
+      home,
+      roomId,
+      { history, seen, unread, sentIds: localIds, cut },
+      queueBytes,
+    );
+    if (r === undefined) return; // The prompt hook holds the lock; retry on the next message.
+    queueBytes = r.bytes;
+    queueIno = r.ino;
+    grownRecords = 0;
+    grownBytes = 0;
   };
 
   const wake = () => {
@@ -360,8 +460,39 @@ export function createRoomSession(opts: {
   };
 
   /**
+   * Raise one notification for everything claimed since the last one, at most once per
+   * `notifyIntervalMs` per room. `<room>/notify-last` carries the time across sessions; when
+   * another session notified within the interval, the batch waits for the next slot.
+   */
+  const flushNotify = () => {
+    notifyTimer = undefined;
+    if (toNotify.length === 0 || gone || closed) return;
+    const last = join(roomDir(home, roomId), "notify-last");
+    let wait = 0;
+    try {
+      wait = statSync(last).mtimeMs + notifyIntervalMs - Date.now();
+    } catch {
+      // Never notified in this room.
+    }
+    if (wait > 0) {
+      notifyTimer = setTimeout(flushNotify, Math.min(wait, notifyIntervalMs));
+      notifyTimer.unref();
+      return;
+    }
+    try {
+      writeFileSync(last, "", { mode: 0o600 });
+    } catch {
+      return; // The room dir is gone.
+    }
+    const { title, text } = batchNotificationText(toNotify);
+    toNotify = [];
+    notifier(title, text);
+  };
+
+  /**
    * Notify for a live message from elsewhere that needs this member, once per room across
-   * processes: whoever creates `<room>/notified/<hash of id>` first raises it (KTD16).
+   * processes: whoever creates `<room>/notified/<hash of id>` first claims it (KTD16). Claimed
+   * messages are coalesced into at most one notification per interval.
    */
   const maybeNotify = (seq: number, env: Envelope) => {
     if (liveAfter === undefined || seq <= liveAfter) return;
@@ -374,8 +505,8 @@ export function createRoomSession(opts: {
     } catch {
       return; // Claimed by another session, or the room dir is gone.
     }
-    const { title, text } = notificationText(env);
-    notifier(title, text);
+    toNotify.push(env);
+    if (notifyTimer === undefined) flushNotify();
   };
 
   /** The single seal path for outbound envelopes. Refuses a human tag (invariant 2). */
@@ -387,7 +518,7 @@ export function createRoomSession(opts: {
   const post = async (env: Envelope): Promise<number> => {
     const blob = await sealOutbound(env);
     localIds.add(env.id);
-    appendQueue(home, roomId, [{ t: "sent", ids: [env.id] }]);
+    append([{ t: "sent", ids: [env.id] }]);
     const echo = new Promise<number>((resolve, reject) => {
       const timer = setTimeout(() => {
         pendingEcho.delete(env.id);
@@ -438,8 +569,9 @@ export function createRoomSession(opts: {
     const own = local && !isHuman(env);
     seen.add(env.id);
     history.push({ seq, env, own });
+    if (local && isHuman(env)) cut = false;
     const record: QueueRecord = { t: "msg", seq, env, own };
-    appendQueue(home, roomId, [record]);
+    append([record]);
     noteMember(env);
     if (pending) {
       pendingEcho.delete(env.id);
@@ -449,6 +581,8 @@ export function createRoomSession(opts: {
       wake();
       if (!local) maybeNotify(seq, env);
     }
+    if (history.length > HISTORY_MAX) trim(history);
+    maybeCompact();
     persistStatus();
   };
 
@@ -463,6 +597,7 @@ export function createRoomSession(opts: {
   const onGone = (code: GoneCode) => {
     gone = true;
     clearInterval(externalTimer);
+    clearTimeout(notifyTimer);
     goneCode = code;
     client.stop();
     deleteRoomDir(home, roomId);
@@ -600,19 +735,38 @@ export function createRoomSession(opts: {
     const all = unreadMessages().filter(
       (m) => o.thread === undefined || m.env.thread === o.thread,
     );
-    const batch = all.slice(0, o.limit ?? DEFAULT_LIMIT);
+    const candidates = all.slice(0, o.limit ?? DEFAULT_LIMIT);
+    // One suffix for the sizing pass and the final frame, so the measured lengths are exact.
+    const hex = randomBytes(6).toString("hex");
+    const randomHex = () => hex;
+    // frameInbound joins per-message blocks with "\n", so prefix lengths add up. The first
+    // message is always returned whole, even over budget, so a large one cannot stall the inbox.
+    let count = 0;
+    let framed = -1;
+    for (const m of candidates) {
+      const next = framed + 1 + frameInbound([m.env], { randomHex }).length;
+      const rest = all.length - count - 1;
+      const total = next + (rest > 0 ? 1 + moreText(rest).length : 0);
+      if (count > 0 && total > INBOX_BUDGET) break;
+      framed = next;
+      count++;
+    }
+    const batch = candidates.slice(0, count);
     const parts: string[] = [];
     if (batch.length > 0) {
       for (const m of batch) unread.delete(m.env.id);
       if (!gone) {
-        appendQueue(home, roomId, [
-          { t: "read", ids: batch.map((m) => m.env.id) },
-        ]);
+        append([{ t: "read", ids: batch.map((m) => m.env.id) }]);
         persistStatus();
       }
-      parts.push(frameInbound(batch.map((m) => m.env)));
+      parts.push(
+        frameInbound(
+          batch.map((m) => m.env),
+          { randomHex },
+        ),
+      );
       const more = all.length - batch.length;
-      if (more > 0) parts.push(`${more} more unread.`);
+      if (more > 0) parts.push(moreText(more));
     } else if (!gone) {
       parts.push("No unread messages.");
     }
@@ -640,10 +794,9 @@ export function createRoomSession(opts: {
         syncExternalReads();
         const hist = ordered();
         const env = build(input, "mcp", hist);
-        const refusal = checkChain(
-          chainState(hist, maxAgentChain, localIds),
-          env.thread,
-        );
+        const chain = chainState(hist, maxAgentChain, localIds);
+        const refusal =
+          checkChain(chain, env.thread) ?? cutRefusal(chain, env.thread);
         if (refusal) throw new Error(chainRefusalText(refusal));
         const seq = await post(env);
         return { id: env.id, seq };
@@ -684,6 +837,7 @@ export function createRoomSession(opts: {
     close() {
       closed = true;
       clearInterval(externalTimer);
+      clearTimeout(notifyTimer);
       client.stop();
       settleCatchUp(true);
       for (const p of pendingEcho.values()) {
