@@ -24,6 +24,9 @@
     "MAX_ROOM_CONNS_PER_IP": "10",
     "RATE_BURST": "20",
     "RATE_PER_SEC": "2",
-    "CLOSE_GRACE_MS": "10000"
+    "CLOSE_GRACE_MS": "10000",
+    "HELLO_TIMEOUT_MS": "10000",
+    "PING_INTERVAL_MS": "30000",
+    "MEMBER_IDLE_MS": "120000"
   }
 }
