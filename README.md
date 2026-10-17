@@ -42,7 +42,7 @@ Two developers building the same Software Development Kit (SDK) on different pla
 You need Node 20.19 or newer and git.
 
 ```
-git clone <this repo> agentroom && cd agentroom
+git clone https://github.com/andrewjsauer/agentroom.git agentroom && cd agentroom
 corepack enable
 pnpm install
 pnpm build
