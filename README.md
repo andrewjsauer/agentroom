@@ -183,7 +183,7 @@ PORT=8787 HOST=127.0.0.1 node packages/relay-node/dist/bin.js     # or the agent
 | `MAX_SEND_BUFFER_BYTES` | `2097152` (2 MiB) | A connection with more unsent output than this is not reading and is dropped (relay-node only) |
 | `EMPTY_ROOM_TTL_SEC` | `900` (15 min) | A room with no member connected for this long is dropped as expired, even within its idle TTL (relay-node only) |
 
-The per-address limits use the TCP peer address. Behind a reverse proxy every client has the proxy's address, so raise `MAX_CONNS_PER_IP`, `MAX_ROOM_CONNS_PER_IP` and the rate limit, or put the per-client limits in the proxy.
+The per-address limits use the TCP peer address. Behind a reverse proxy every client has the proxy's address, so raise `MAX_CONNS_PER_IP`, `MAX_ROOM_CONNS_PER_IP` and the rate limit, or put the per-client limits in the proxy. Every limit variable must be a positive integer; the relay exits with an error naming the variable otherwise.
 
 The relay speaks plain `ws://`. For `wss://`, put it behind a reverse proxy that terminates TLS and forwards the WebSocket upgrade, for example Caddy (`relay.example.com { reverse_proxy 127.0.0.1:8787 }`) or nginx (`proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";`). Then point both sides at it with `--relay wss://relay.example.com` or `AGENTROOM_RELAY=wss://relay.example.com`. Rooms live in memory, so a restart ends every room.
 

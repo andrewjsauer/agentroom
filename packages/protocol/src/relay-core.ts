@@ -49,6 +49,22 @@ export const DEFAULT_LIMITS: RelayLimits = {
   pingIntervalMs: 30_000,
 };
 
+/**
+ * A limit from configuration text: undefined when unset or empty, otherwise a positive safe
+ * integer. Anything else throws, so a typo fails at startup instead of silently using a default.
+ */
+export function positiveInt(
+  name: string,
+  raw: string | undefined,
+): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  if (!/^[1-9][0-9]*$/.test(raw) || !Number.isSafeInteger(n)) {
+    throw new Error(`${name} must be a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
 /** Largest WebSocket frame a relay accepts. */
 export const MAX_FRAME_BYTES = 96 * 1024;
 

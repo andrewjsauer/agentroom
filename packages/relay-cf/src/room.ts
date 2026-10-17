@@ -12,6 +12,7 @@ import {
   PING_FRAME,
   PONG_FRAME,
   parseClientFrame,
+  positiveInt,
   type RateState,
   type RelayEvent,
   type RelayLimits,
@@ -49,24 +50,24 @@ const bufferKey = (seq: number) => `b:${String(seq).padStart(10, "0")}`;
 const att = (ws: WebSocket) => ws.deserializeAttachment() as Attachment;
 const log = (event: RelayEvent) => console.log(JSON.stringify(event));
 
-function limitsFrom(env: Env): RelayLimits {
-  const n = (v: string | undefined, d: number) => {
-    const x = Number(v);
-    return v && Number.isFinite(x) && x > 0 ? x : d;
-  };
+/** Limits from wrangler `vars`; an invalid value throws, so every request fails loudly. */
+export function limitsFrom(env: Env): RelayLimits & { memberIdleMs: number } {
+  const n = (name: keyof Env & string, d: number) =>
+    positiveInt(name, env[name] as string | undefined) ?? d;
   const d = DEFAULT_LIMITS;
   return {
-    idleTtlSec: n(env.IDLE_TTL_SEC, d.idleTtlSec),
-    maxAgeSec: n(env.MAX_AGE_SEC, d.maxAgeSec),
-    bufferSize: n(env.BUFFER_SIZE, d.bufferSize),
+    idleTtlSec: n("IDLE_TTL_SEC", d.idleTtlSec),
+    maxAgeSec: n("MAX_AGE_SEC", d.maxAgeSec),
+    bufferSize: n("BUFFER_SIZE", d.bufferSize),
     maxEnvelopeBytes: d.maxEnvelopeBytes,
-    maxMembers: n(env.MAX_MEMBERS, d.maxMembers),
-    maxRoomConnsPerIp: n(env.MAX_ROOM_CONNS_PER_IP, d.maxRoomConnsPerIp),
-    rateBurst: n(env.RATE_BURST, d.rateBurst),
-    ratePerSec: n(env.RATE_PER_SEC, d.ratePerSec),
-    closeGraceMs: n(env.CLOSE_GRACE_MS, d.closeGraceMs),
-    helloTimeoutMs: n(env.HELLO_TIMEOUT_MS, d.helloTimeoutMs),
-    pingIntervalMs: n(env.PING_INTERVAL_MS, d.pingIntervalMs),
+    maxMembers: n("MAX_MEMBERS", d.maxMembers),
+    maxRoomConnsPerIp: n("MAX_ROOM_CONNS_PER_IP", d.maxRoomConnsPerIp),
+    rateBurst: n("RATE_BURST", d.rateBurst),
+    ratePerSec: n("RATE_PER_SEC", d.ratePerSec),
+    closeGraceMs: n("CLOSE_GRACE_MS", d.closeGraceMs),
+    helloTimeoutMs: n("HELLO_TIMEOUT_MS", d.helloTimeoutMs),
+    pingIntervalMs: n("PING_INTERVAL_MS", d.pingIntervalMs),
+    memberIdleMs: n("MEMBER_IDLE_MS", MEMBER_IDLE_MS),
   };
 }
 
@@ -88,8 +89,9 @@ export class Room extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.limits = limitsFrom(env);
-    this.memberIdleMs = Number(env.MEMBER_IDLE_MS) || MEMBER_IDLE_MS;
+    const limits = limitsFrom(env);
+    this.limits = limits;
+    this.memberIdleMs = limits.memberIdleMs;
     // Answered by the runtime without waking the object; the alarm reads the time of the last one.
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME),

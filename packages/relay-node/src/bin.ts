@@ -1,18 +1,15 @@
 #!/usr/bin/env node
+import { positiveInt } from "@agentroom/protocol/relay-core";
 import { startRelay } from "./relay.js";
 
-/** A positive number from the environment, or undefined for the relay default. */
+/** A positive integer from the environment, or undefined for the relay default; exits on junk. */
 function num(name: string): number | undefined {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return undefined;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    process.stderr.write(
-      `agentroom relay: ${name} must be a positive number\n`,
-    );
+  try {
+    return positiveInt(name, process.env[name]);
+  } catch (err) {
+    process.stderr.write(`agentroom relay: ${(err as Error).message}\n`);
     process.exit(2);
   }
-  return n;
 }
 
 const burst = num("RATE_BURST");

@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   deriveRoom,
   generateCloseKeyPair,
@@ -672,6 +674,25 @@ describe("relay-wide caps and memory", () => {
     expect(await again.next()).toMatchObject({ code: "room_expired" });
     expect(relay.snapshot(ROOM)).toBeDefined();
   });
+});
+
+test("the bin exits 2 and names the variable when a limit is not a positive integer", () => {
+  const bin = fileURLToPath(new URL("../dist/bin.js", import.meta.url));
+  for (const [name, value] of <[string, string][]>[
+    ["BUFFER_SIZE", "1.5"],
+    ["MAX_CONNS_PER_IP", "abc"],
+    ["RATE_PER_SEC", "0"],
+  ]) {
+    const run = spawnSync(process.execPath, [bin], {
+      env: { ...process.env, PORT: "0", [name]: value },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain(
+      `${name} must be a positive integer, got "${value}"`,
+    );
+  }
 });
 
 describe("liveness", () => {

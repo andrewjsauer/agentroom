@@ -1,4 +1,4 @@
-import { Room } from "./room.js";
+import { limitsFrom, Room } from "./room.js";
 
 export { Room };
 
@@ -34,6 +34,13 @@ export default {
     const inspect = env.TEST_INSPECT === "1" && url.pathname === "/__inspect";
     if (!upgrade && !inspect) {
       return refuse(426, "agentroom relay: connect with a WebSocket");
+    }
+    try {
+      limitsFrom(env);
+    } catch (err) {
+      // A bad `vars` value fails every connection and says why in the Worker logs.
+      console.error(`agentroom relay: ${(err as Error).message}`);
+      return refuse(500, "relay is misconfigured");
     }
     if (upgrade) {
       // Real clients are Node processes and send no Origin; a browser page always does.

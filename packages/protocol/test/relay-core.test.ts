@@ -9,7 +9,9 @@ import {
   expiresAt,
   newNonce,
   newRoomState,
+  positiveInt,
   type RoomState,
+  rateFor,
   verifyCloseWebCrypto,
 } from "../src/relay-core.js";
 import { type HelloFrame, roomUrl } from "../src/wire.js";
@@ -167,4 +169,35 @@ test("KTD7: Web Crypto and libsodium agree on valid, tampered, wrong-key, replay
     expect(await verifyClose(pk, s, room, n)).toBe(want);
     expect(await verifyCloseWebCrypto(pk, s, room, n)).toBe(want);
   }
+});
+
+test("positiveInt accepts positive integers, treats unset as default, and throws on the rest", () => {
+  expect(positiveInt("X", undefined)).toBeUndefined();
+  expect(positiveInt("X", "")).toBeUndefined();
+  expect(positiveInt("X", "1")).toBe(1);
+  expect(positiveInt("X", "86400")).toBe(86_400);
+  for (const bad of [
+    "0",
+    "-1",
+    "1.5",
+    "2e3",
+    " 5",
+    "0x10",
+    "abc",
+    "Infinity",
+    "99999999999999999999",
+  ]) {
+    expect(() => positiveInt("BUFFER_SIZE", bad)).toThrow(
+      `BUFFER_SIZE must be a positive integer, got "${bad}"`,
+    );
+  }
+});
+
+test("rateFor shares one bucket per key and starts it full", () => {
+  const rates = new Map();
+  const a = rateFor(rates, "1.2.3.4", 0, L);
+  expect(a).toEqual({ tokens: L.rateBurst, refilledAt: 0 });
+  a.tokens = 0;
+  expect(rateFor(rates, "1.2.3.4", 5, L)).toBe(a);
+  expect(rateFor(rates, "5.6.7.8", 5, L).tokens).toBe(L.rateBurst);
 });

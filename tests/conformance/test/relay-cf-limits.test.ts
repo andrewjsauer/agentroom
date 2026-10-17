@@ -32,6 +32,14 @@ describe.skipIf(CF_SKIP)(CF_TITLE, () => {
     expect(opened).toBeGreaterThanOrEqual(limit);
   }, 60_000);
 
+  test("a limit var that is not a positive integer fails every connection loudly", async () => {
+    cf = await startCfRelay({ BUFFER_SIZE: "1.5" });
+    await expect(Conn.open(cf.url, newRoomId())).rejects.toThrow("HTTP 500");
+    expect(cf.logs()).toContain(
+      'BUFFER_SIZE must be a positive integer, got "1.5"',
+    );
+  }, 60_000);
+
   test("since replay reads storage in pages and still delivers every envelope in order", async () => {
     cf = await startCfRelay({ RATE_BURST: "500" });
     const room = newRoomId();
