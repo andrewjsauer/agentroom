@@ -156,6 +156,16 @@ export function defineWireSuite(
       expect(c.closed).toBe(false);
     });
 
+    test("rate limit: reconnecting from the same address does not reset the put budget", async () => {
+      const { room, c } = await create();
+      for (let i = 0; i < 21; i++) c.send({ t: "put", blob: "AAAA" });
+      expect((await c.take("error")).code).toBe("rate_limited");
+      c.close();
+      const { c: again } = await join(room);
+      for (let i = 0; i < 3; i++) again.send({ t: "put", blob: "AAAA" });
+      expect((await again.take("error")).code).toBe("rate_limited");
+    });
+
     test("room cap: the ninth member is room_full; closers are admitted until the per-address cap", async () => {
       const { room } = await create();
       for (let i = 0; i < 7; i++) await join(room);

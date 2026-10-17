@@ -13,8 +13,10 @@ import {
   MAX_FRAME_BYTES,
   newNonce,
   parseClientFrame,
+  type RateState,
   type RelayEvent,
   type RelayLimits,
+  rateFor,
   expiresAt as roomExpiresAt,
   tombstoneUntil,
 } from "@agentroom/protocol/relay-core";
@@ -35,7 +37,7 @@ export interface RelayOptions {
   maxMembers?: number;
   /** Connections one address may hold in one room, close-only included (default 10). */
   maxRoomConnsPerIp?: number;
-  /** Token bucket on `put`, per connection (default burst 20, refill 2/s). */
+  /** Token bucket on `put`, per address per room, kept across reconnects (default burst 20, refill 2/s). */
   rateLimit?: { burst: number; perSec: number };
   /** How long a close-only connection may wait before sending `close` (default 10 s). */
   closeGraceMs?: number;
@@ -69,6 +71,8 @@ interface Room {
   state: RoomSnapshot;
   conns: Set<WebSocket>;
   closers: Set<WebSocket>;
+  /** `put` token buckets by client address. */
+  rates: Map<string, RateState>;
 }
 
 interface Conn {
@@ -78,8 +82,6 @@ interface Conn {
   nonce?: string;
   closeOnly: boolean;
   graceTimer?: NodeJS.Timeout;
-  tokens: number;
-  refilledAt: number;
 }
 
 function defaultLog(event: RelayEvent): void {
@@ -202,6 +204,7 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
         state: { ...decision.created, buffer: [] },
         conns: new Set(),
         closers: new Set(),
+        rates: new Map(),
       };
       rooms.set(hello.room, room);
       log({ event: "room_created", room: hello.room });
@@ -262,8 +265,6 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     const conn: Conn = {
       ip: req.socket.remoteAddress ?? "",
       closeOnly: false,
-      tokens: limits.rateBurst,
-      refilledAt: now(),
     };
     conns.set(ws, conn);
     let greeted = false;
@@ -297,7 +298,9 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
       }
       const room = conn.room;
       if (!room || liveRoom(room.state.roomId) !== room) return;
-      const admit = admitPut(conn, frame.blob, now(), limits);
+      const t = now();
+      const rate = rateFor(room.rates, conn.ip, t, limits);
+      const admit = admitPut(rate, frame.blob, t, limits);
       if (!admit.ok) {
         fail(ws, admit.code, admit.message, false);
         return;

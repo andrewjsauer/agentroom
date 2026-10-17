@@ -9,9 +9,11 @@ import {
   MAX_FRAME_BYTES,
   newNonce,
   parseClientFrame,
+  type RateState,
   type RelayEvent,
   type RelayLimits,
   type RoomState,
+  rateFor,
   tombstoneUntil,
   verifyCloseWebCrypto,
 } from "@agentroom/protocol/relay-core";
@@ -25,8 +27,6 @@ interface Attachment {
   /** `done`: closed by either side, kept until the runtime drops the socket. */
   role: "pending" | "member" | "closer" | "done";
   nonce?: string;
-  tokens: number;
-  refilledAt: number;
   closeBy?: number;
 }
 
@@ -61,6 +61,12 @@ export class Room extends DurableObject<Env> {
   private state: RoomState | undefined;
   private tomb: number | undefined;
   private readonly limits: RelayLimits;
+  /**
+   * `put` buckets by client address, shared by that address's sockets. In memory only: the
+   * object hibernates only after about 10 s without events, by which time a bucket has
+   * refilled (burst 20 at 2/s), so losing it on hibernation grants nothing extra.
+   */
+  private readonly rates = new Map<string, RateState>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -92,8 +98,6 @@ export class Room extends DurableObject<Env> {
       room,
       ip,
       role: "pending",
-      tokens: this.limits.rateBurst,
-      refilledAt: Date.now(),
     } satisfies Attachment);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -163,6 +167,7 @@ export class Room extends DurableObject<Env> {
     }
     const until = tombstoneUntil(state);
     this.state = undefined;
+    this.rates.clear();
     this.tomb = until;
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
@@ -246,8 +251,8 @@ export class Room extends DurableObject<Env> {
     const state = await this.live();
     if (!state) return;
     const now = Date.now();
-    const admit = admitPut(a, frame.blob, now, this.limits);
-    ws.serializeAttachment(a);
+    const rate = rateFor(this.rates, a.ip, now, this.limits);
+    const admit = admitPut(rate, frame.blob, now, this.limits);
     if (!admit.ok) {
       this.fail(ws, admit.code, admit.message, false);
       return;

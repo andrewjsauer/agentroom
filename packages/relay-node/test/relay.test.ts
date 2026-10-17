@@ -448,7 +448,7 @@ describe("max age, rate limit, cap", () => {
     expect(relay.snapshot(ROOM)).toBeUndefined();
   });
 
-  test("rate limit refuses without closing, is per connection, and refills", async () => {
+  test("rate limit refuses without closing, is per address, survives reconnects, and refills", async () => {
     await start({ rateLimit: { burst: 3, perSec: 1 } });
     const { c: a } = await createRoom();
     const { c: b } = await joinRoom();
@@ -462,10 +462,16 @@ describe("max age, rate limit, cap", () => {
     expect(await a.next()).toMatchObject({ code: "rate_limited" });
     expect(relay.snapshot(ROOM)?.seq).toBe(3);
     b.send({ t: "put", blob: "CCCC" });
-    expect(await a.next()).toMatchObject({ t: "msg", seq: 4 });
+    expect(await b.next()).toMatchObject({ code: "rate_limited" });
+    const { c: fresh } = await joinRoom();
+    fresh.send({ t: "put", blob: "CCCC" });
+    expect(await fresh.next()).toMatchObject({ code: "rate_limited" });
+    expect(relay.snapshot(ROOM)?.seq).toBe(3);
     clock += 1_000;
     a.send({ t: "put", blob: "DDDD" });
-    expect(await a.next()).toMatchObject({ t: "msg", seq: 5 });
+    let f = await a.next();
+    while (f.t === "presence") f = await a.next();
+    expect(f).toMatchObject({ t: "msg", seq: 4 });
   });
 
   test("a join over maxMembers gets room_full; after a leave it succeeds", async () => {

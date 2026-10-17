@@ -19,7 +19,7 @@ export interface RelayLimits {
    * elsewhere cannot crowd out the creator's `down`.
    */
   maxRoomConnsPerIp: number;
-  /** Token bucket on `put`, per connection. */
+  /** Token bucket on `put`, per client address per room, so reconnecting does not refill it. */
   rateBurst: number;
   ratePerSec: number;
   /** How long a close-only connection may wait before sending `close`. */
@@ -188,6 +188,24 @@ export function decodedLength(b64: string): number {
 export interface RateState {
   tokens: number;
   refilledAt: number;
+}
+
+/**
+ * The room's bucket for `key` (the client address), created full on first use. A new socket
+ * from the same address gets the existing bucket, so reconnecting does not reset the budget.
+ */
+export function rateFor(
+  rates: Map<string, RateState>,
+  key: string,
+  now: number,
+  limits: RelayLimits,
+): RateState {
+  let rate = rates.get(key);
+  if (!rate) {
+    rate = { tokens: limits.rateBurst, refilledAt: now };
+    rates.set(key, rate);
+  }
+  return rate;
 }
 
 /** Refill and spend one token, then check the envelope size. Mutates `rate`. */
