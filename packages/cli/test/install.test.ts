@@ -62,7 +62,11 @@ function homeWithRoom(): string {
 
 test("mcpServerCommand uses npx when installed and the absolute checkout path otherwise", () => {
   expect(
-    mcpServerCommand("/x/node_modules/@sauerapple/agentroom/dist/bin.js", ROOM, "/n"),
+    mcpServerCommand(
+      "/x/node_modules/@sauerapple/agentroom/dist/bin.js",
+      ROOM,
+      "/n",
+    ),
   ).toEqual({
     command: "npx",
     args: ["-y", "@sauerapple/agentroom", "mcp", "--room", ROOM],
@@ -114,7 +118,8 @@ test("an entry inside node_modules registers npx -y @sauerapple/agentroom", asyn
   const fake = fakeClaude();
   const t = makeCtx(home, {
     env: { PATH: fake.path, CLAUDE_FAKE_LOG: fake.log },
-    entryPath: "/Users/x/.npm/_npx/abc/node_modules/@sauerapple/agentroom/dist/bin.js",
+    entryPath:
+      "/Users/x/.npm/_npx/abc/node_modules/@sauerapple/agentroom/dist/bin.js",
   });
   expect(await main(["install", "claude"], t.ctx)).toBe(0);
   expect(calls(fake.log)[1]?.slice(7)).toEqual([
