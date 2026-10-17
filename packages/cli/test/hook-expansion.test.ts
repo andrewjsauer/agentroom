@@ -1,7 +1,16 @@
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { readCurrent, readRoomSettings, roomDir } from "@agentroom/mcp";
 import { afterEach, expect, test } from "vitest";
-import { recognize } from "../src/hook/expansion.js";
+import { originProblem, recognize } from "../src/hook/expansion.js";
 import { type HookRoom, hookRoom, reasonOf } from "./hook-env.js";
 
 let r: HookRoom;
@@ -161,6 +170,57 @@ test("the hook-origin guard: no CLAUDE_PLUGIN_ROOT or the wrong event exits 1 an
   expect(wrong.exit).toBe(1);
   expect(wrong.out).toBe("");
   expect(r.head()).toBe(before);
+});
+
+test("the hook-origin guard refuses forged inputs: bad transcript, session, cwd or event", async () => {
+  r = await hookRoom();
+  await r.agentPost();
+  const before = r.head();
+  const outside = join(r.home, "elsewhere.jsonl");
+  writeFileSync(outside, "");
+  const linkDir = join(r.home, "claude-config", "projects", "-link");
+  mkdirSync(linkDir);
+  symlinkSync(outside, join(linkDir, "escape.jsonl"));
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ transcript_path: "/nonexistent/x.jsonl" }, /transcript_path/],
+    [{ transcript_path: outside }, /transcript_path/],
+    [{ transcript_path: join(linkDir, "escape.jsonl") }, /transcript_path/],
+    [{ transcript_path: linkDir }, /transcript_path/],
+    [{ transcript_path: "relative.jsonl" }, /transcript_path/],
+    [{ session_id: "  " }, /session_id is empty/],
+    [{ session_id: undefined }, /session_id/],
+    [{ cwd: "/nonexistent-agentroom-cwd" }, /cwd/],
+    [{ cwd: r.transcript }, /cwd/],
+    [{ hook_event_name: undefined }, /hook_event_name/],
+    [{ hook_event_name: "PreToolUse" }, /plugin hook$/m],
+  ];
+  for (const [fields, err] of cases) {
+    const res = await r.expand({ ...say("forged"), ...fields });
+    expect(res.exit, JSON.stringify(fields)).toBe(1);
+    expect(res.out).toBe("");
+    expect(res.err).toMatch(err);
+  }
+  expect(r.head()).toBe(before);
+  // The same call with the real-looking fields goes through.
+  expect(reasonOf((await r.expand(say("real"))).out)).toMatch(/^Sent to room/);
+});
+
+test("originProblem resolves the projects dir from CLAUDE_CONFIG_DIR, else HOME/.claude", () => {
+  const home = mkdtempSync(join(tmpdir(), "agentroom-origin-"));
+  try {
+    const dir = join(home, ".claude", "projects", "p");
+    mkdirSync(dir, { recursive: true });
+    const transcript = join(dir, "s.jsonl");
+    writeFileSync(transcript, "");
+    const input = { session_id: "s", transcript_path: transcript, cwd: home };
+    expect(originProblem(input, { HOME: home })).toBeUndefined();
+    expect(
+      originProblem(input, { HOME: home, CLAUDE_CONFIG_DIR: join(home, "x") }),
+    ).toMatch(/transcript_path/);
+    expect(originProblem(input, {})).toMatch(/HOME/);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("a thread id with escape sequences is stripped in the reason", async () => {

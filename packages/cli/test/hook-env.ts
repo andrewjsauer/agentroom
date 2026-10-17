@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   deriveRoom,
   type Envelope,
@@ -39,6 +40,12 @@ export async function hookRoom(opts: Partial<RelayOptions> = {}) {
   }
   const code = codeFrom(t.out());
   const { roomId, key } = deriveRoom(parseShareCode(code));
+  // What a real session has: a transcript under <CLAUDE_CONFIG_DIR>/projects and an existing cwd.
+  const projectDir = join(home, "claude-config", "projects", "-my-project");
+  mkdirSync(projectDir, { recursive: true });
+  const transcript = join(projectDir, "00893aaf.jsonl");
+  writeFileSync(transcript, "");
+  const origin = { transcript_path: transcript, cwd: home };
 
   const all = async (): Promise<Envelope[]> =>
     Promise.all(
@@ -53,6 +60,7 @@ export async function hookRoom(opts: Partial<RelayOptions> = {}) {
     code,
     roomId,
     key,
+    transcript,
     head: () => relay.snapshot(roomId)?.seq ?? 0,
     all,
     last: async () => (await all()).at(-1) as Envelope,
@@ -79,7 +87,9 @@ export async function hookRoom(opts: Partial<RelayOptions> = {}) {
       env: NodeJS.ProcessEnv = { CLAUDE_PLUGIN_ROOT: "/plugin" },
     ) {
       const c = makeCtx(home, { env });
-      c.stdin.end(JSON.stringify({ ...EXPANSION_FIXTURE, ...fields }));
+      c.stdin.end(
+        JSON.stringify({ ...EXPANSION_FIXTURE, ...origin, ...fields }),
+      );
       const exit = await main(["hook", "prompt-expansion"], c.ctx);
       return { exit, out: c.out(), err: c.err() };
     },
