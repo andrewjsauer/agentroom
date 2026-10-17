@@ -268,9 +268,12 @@ function scanOnce(text: string): Hit | undefined {
   return undefined;
 }
 
-/** Zero-width and format characters that can split a token unseen, plus the Unicode Tag block. */
-const INVISIBLE =
-  /[\u00ad\u061c\u200b-\u200d\u2060-\u2064\ufeff]|[\u{e0000}-\u{e007f}]/gu;
+/**
+ * Every format character (\p{Cf}: zero-width characters, bidi marks and controls, soft hyphen,
+ * BOM) and the whole Unicode Tag block: the same set `stripControl` removes before display, so a
+ * token split by any of them reaches the recipient whole.
+ */
+const INVISIBLE = /[\p{Cf}\u{e0000}-\u{e007f}]/gu;
 
 /** The scan copy: invisible characters removed, then NFKC (full-width and styled letters folded). */
 function normalizeForScan(text: string): string {

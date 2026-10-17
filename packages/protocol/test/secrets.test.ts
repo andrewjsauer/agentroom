@@ -300,6 +300,10 @@ describe("secret scanner", () => {
     ["soft hyphen", "\u00ad"],
     ["Arabic letter mark", "\u061c"],
     ["Unicode tag", "\u{e0041}"],
+    ["left-to-right mark", "\u200e"],
+    ["right-to-left override", "\u202e"],
+    ["first strong isolate", "\u2068"],
+    ["Mongolian vowel separator", "\u180e"],
   ])("a token split by a %s still blocks", (_name, ch) => {
     const split = [...j("gh", "p_", alnum36)].join(ch);
     expect(ruleFor(`token ${split}`)).toBe("github-pat");
