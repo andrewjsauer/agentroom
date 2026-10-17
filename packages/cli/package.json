@@ -1,7 +1,26 @@
 {
   "name": "agentroom",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Let your coding agent talk to a coworker's agent through a temporary, end-to-end encrypted room.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andrewjsauer/agentroom.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/andrewjsauer/agentroom#readme",
+  "bugs": {
+    "url": "https://github.com/andrewjsauer/agentroom/issues"
+  },
+  "keywords": [
+    "mcp",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "cursor",
+    "e2e-encryption"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20.19"
@@ -21,14 +40,18 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepack": "cp ../../README.md ../../LICENSE ."
   },
   "dependencies": {
-    "@agentroom/mcp": "workspace:*",
-    "@agentroom/protocol": "workspace:*",
+    "@modelcontextprotocol/server": "^2.3.1",
+    "libsodium-wrappers": "^0.8.4",
+    "ws": "^8.22.0",
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@agentroom/mcp": "workspace:*",
+    "@agentroom/protocol": "workspace:*",
     "@agentroom/relay-node": "workspace:*"
   }
 }

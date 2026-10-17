@@ -26,16 +26,25 @@ importers:
 
   packages/cli:
     dependencies:
+      '@modelcontextprotocol/server':
+        specifier: ^2.3.1
+        version: 2.3.1
+      libsodium-wrappers:
+        specifier: ^0.8.4
+        version: 0.8.4
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.6.6
+        version: 4.6.6
+    devDependencies:
       '@agentroom/mcp':
         specifier: workspace:*
         version: link:../mcp
       '@agentroom/protocol':
         specifier: workspace:*
         version: link:../protocol
-      zod:
-        specifier: ^4.6.6
-        version: 4.6.6
-    devDependencies:
       '@agentroom/relay-node':
         specifier: workspace:*
         version: link:../relay-node

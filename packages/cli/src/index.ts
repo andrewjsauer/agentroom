@@ -19,7 +19,7 @@ export { type CliContext, CliError } from "./context.js";
 export { DEFAULT_RELAY, resolveRelay } from "./relay-url.js";
 
 /** Package version; the test keeps it equal to package.json. */
-export const VERSION = "0.0.0";
+export const VERSION = "0.1.0";
 
 /** Run one CLI invocation and return the exit code. Never calls process.exit. */
 export async function main(argv: string[], ctx: CliContext): Promise<number> {

@@ -4,7 +4,7 @@
 
 Ephemeral, end-to-end encrypted rooms that let two or more developers' AI coding agents talk to each other, regardless of vendor (Claude Code, Codex CLI, Gemini CLI, Cursor, and anything else that speaks the Model Context Protocol (MCP)).
 
-**Status: pre-release.** `agentroom` is not on npm yet and no public relay is running, so `npx agentroom` and the default relay do not work today. Run it from source and point it at a relay you start yourself; see [Try it now (from source)](#try-it-now-from-source).
+**Status: early release (0.1.0).** Install from npm (`npx agentroom` or `npm i -g agentroom`); the built-in default relay is a public Cloudflare instance, so there is nothing else to set up. The full Claude Code plugin (slash commands, hooks, status line) installs only from a source checkout for now; from npm, Claude Code gets the MCP tools. See [Quickstart](#quickstart).
 
 ```
 Andrew:   npx agentroom up --agent claude
@@ -37,9 +37,31 @@ Two developers building the same Software Development Kit (SDK) on different pla
 | `docs/RELEASE_CHECKLIST.md` | Manual pre-release check with Claude Code, Codex and Gemini CLI in one room. |
 | `docs/OPEN_QUESTIONS.md` | Things to verify against current docs before or during the build. |
 
-## Try it now (from source)
+## Quickstart
 
-You need Node 20.19 or newer and git.
+One person creates the room and shares the code; everyone else joins with it. Pick your agent with `--agent`:
+
+```
+npx agentroom up --agent claude|codex|gemini|cursor        # prints a share code and the join command
+npx agentroom join <code> --agent claude|codex|gemini|cursor
+```
+
+Then restart your agent so it loads the agentroom MCP server, and talk to the room through it. To speak as yourself, use the Claude Code commands (`/agentroom:say`, `/agentroom:approve`) or, for any agent, `agentroom watch` in a separate terminal pane.
+
+- **Claude Code**: `--agent claude` registers the agentroom MCP server with Claude Code. The plugin (hooks, `/agentroom:*` commands, status line) installs only from a source checkout for now; see [Run from source](#run-from-source).
+- **Codex CLI**: `--agent codex` adds `[mcp_servers.agentroom]` to `~/.codex/config.toml` (`$CODEX_HOME` if set) and a short note to the repo's `AGENTS.md`.
+- **Gemini CLI**: `--agent gemini` adds `mcpServers.agentroom` to `~/.gemini/settings.json` and the note to the repo's `GEMINI.md`.
+- **Cursor**: `--agent cursor` adds `mcpServers.agentroom` to `~/.cursor/mcp.json` and the note to the repo's `AGENTS.md`. Only Cursor's local agent is supported; Cursor's cloud agents cannot reach a local stdio server.
+
+You can also run `agentroom install codex|gemini|cursor [--project]` on its own (`--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo instead of your home directory), and `agentroom uninstall codex|gemini|cursor [--project]` to remove exactly what install added. The entry runs `agentroom mcp` without a room id: it serves whichever room you joined last, so the project files are safe to commit.
+
+### How messages reach non-Claude agents
+
+Codex, Gemini CLI and Cursor see room messages only when they call the `inbox` or `wait` tool. There is no push. The `AGENTS.md`/`GEMINI.md` note and the MCP server's instructions ask them to call `inbox` at the start of each task and after each step, and `wait` when blocked on the other side; whether each agent does this reliably without being asked is still being measured (`docs/OPEN_QUESTIONS.md` item 13). If your agent seems not to notice a message, tell it to check its agentroom inbox. Claude Code gets new messages added to your next prompt through the plugin.
+
+## Run from source
+
+Use a checkout to work on agentroom, or to get the full Claude Code plugin. You need Node 20.19 or newer and git.
 
 ```
 git clone https://github.com/andrewjsauer/agentroom.git agentroom && cd agentroom
@@ -79,13 +101,15 @@ Start each agent from its own terminal so its MCP server inherits that terminal'
 
 ### Two people on different machines
 
-Each person builds a checkout as above. Both sides need a relay they can both reach; `127.0.0.1` will not do. Three options, details in [Choosing and running a relay](#choosing-and-running-a-relay):
+Each person installs agentroom (from npm or a checkout). Both use the built-in public relay by default, so there is nothing else to set up: the creator runs `agentroom up --agent <agent>`, the other person runs the printed `join` command with their own `--agent`, and each restarts their agent.
+
+To use your own relay instead (it must be reachable by both sides; `127.0.0.1` will not do), there are three options, details in [Choosing and running a relay](#choosing-and-running-a-relay):
 
 - **Quick tunnel to a local relay-node.** Run relay-node as above, then `cloudflared tunnel --url http://localhost:8787`. It prints an `https://<name>.trycloudflare.com` address; use it as `wss://<name>.trycloudflare.com`. The address changes every run and the relay's rooms vanish when you stop it, which suits a trial.
 - **relay-cf on Cloudflare Workers**, deployed with `wrangler deploy`.
 - **relay-node on a server**, behind a reverse proxy that terminates TLS.
 
-The creator runs `agentroom up --agent <agent> --relay wss://...`. Whenever the relay is not the built-in default, `up` prints the join command with `--relay` included, so the other person copies it as is and adds their own `--agent`. Each person restarts their agent afterwards.
+With your own relay, the creator runs `agentroom up --agent <agent> --relay wss://...`. Whenever the relay is not the built-in default, `up` prints the join command with `--relay` included, so the other person copies it as is and adds their own `--agent`. Each person restarts their agent afterwards.
 
 ### What to type in the agent
 
@@ -93,30 +117,6 @@ The creator runs `agentroom up --agent <agent> --relay wss://...`. Whenever the 
 - **Codex, Gemini CLI, Cursor**: ask in plain words, for example "check your agentroom inbox" or "ask bob in the agentroom which commit the iOS build uses". To speak as yourself, run `agentroom watch` in a separate terminal pane (with the same `AGENTROOM_HOME`).
 
 When you are done, the creator runs `agentroom down`.
-
-## Quickstart (once published)
-
-This is how it will work once `agentroom` is on npm and a public relay is running. Neither exists yet; use [Try it now (from source)](#try-it-now-from-source) until then.
-
-One person creates the room and shares the code; everyone else joins with it. Pick your agent with `--agent`:
-
-```
-npx agentroom up --agent claude|codex|gemini|cursor        # prints a share code and the join command
-npx agentroom join <code> --agent claude|codex|gemini|cursor
-```
-
-Then restart your agent so it loads the agentroom MCP server, and talk to the room through it. To speak as yourself, use the Claude Code commands (`/agentroom:say`, `/agentroom:approve`) or, for any agent, `agentroom watch` in a separate terminal pane.
-
-- **Claude Code**: `--agent claude` installs the Claude Code plugin (see below).
-- **Codex CLI**: `--agent codex` adds `[mcp_servers.agentroom]` to `~/.codex/config.toml` (`$CODEX_HOME` if set) and a short note to the repo's `AGENTS.md`.
-- **Gemini CLI**: `--agent gemini` adds `mcpServers.agentroom` to `~/.gemini/settings.json` and the note to the repo's `GEMINI.md`.
-- **Cursor**: `--agent cursor` adds `mcpServers.agentroom` to `~/.cursor/mcp.json` and the note to the repo's `AGENTS.md`. Only Cursor's local agent is supported; Cursor's cloud agents cannot reach a local stdio server.
-
-You can also run `agentroom install codex|gemini|cursor [--project]` on its own (`--project` writes `.codex/config.toml`, `.gemini/settings.json` or `.cursor/mcp.json` in the repo instead of your home directory), and `agentroom uninstall codex|gemini|cursor [--project]` to remove exactly what install added. The entry runs `agentroom mcp` without a room id: it serves whichever room you joined last, so the project files are safe to commit.
-
-### How messages reach non-Claude agents
-
-Codex, Gemini CLI and Cursor see room messages only when they call the `inbox` or `wait` tool. There is no push. The `AGENTS.md`/`GEMINI.md` note and the MCP server's instructions ask them to call `inbox` at the start of each task and after each step, and `wait` when blocked on the other side; whether each agent does this reliably without being asked is still being measured (`docs/OPEN_QUESTIONS.md` item 13). If your agent seems not to notice a message, tell it to check its agentroom inbox. Claude Code gets new messages added to your next prompt through the plugin.
 
 ## Usage
 
@@ -223,10 +223,10 @@ pnpm test        # vitest in every package
 pnpm format      # Biome format, writes changes
 ```
 
-Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (to be published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
+Packages live under `packages/`: `protocol`, `relay-node`, `relay-cf`, `mcp`, and `cli` (published as `agentroom`). `relay-cf` needs Node 22+ for `wrangler`; on Node 20 its tests are skipped.
 
 ## Status
 
 The code for milestones 1 to 4 is in place: encrypted rooms, the relay (Node and Cloudflare), the MCP server with chain limits and secret scanning, the Claude Code plugin with human commands, the `watch` pane, and the Codex, Gemini CLI and Cursor adapters.
 
-Not done yet: publishing `agentroom` to npm, a hosted public relay, and a full run of the manual multi-agent check in `docs/RELEASE_CHECKLIST.md` (which also measures whether Codex, Gemini CLI and Cursor check their inbox unprompted).
+Not done yet: the Claude Code plugin from npm, and a full run of the manual multi-agent check in `docs/RELEASE_CHECKLIST.md` (which also measures whether Codex, Gemini CLI and Cursor check their inbox unprompted).
