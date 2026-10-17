@@ -20,3 +20,4 @@ build-logs/
 
 # Wrangler local state
 .wrangler/
+.claude/

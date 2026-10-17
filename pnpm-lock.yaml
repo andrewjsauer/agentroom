@@ -123,12 +123,12 @@ importers:
       '@modelcontextprotocol/client':
         specifier: ^2.3.1
         version: 2.3.1
+      '@sauerapple/agentroom':
+        specifier: workspace:*
+        version: link:../../packages/cli
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.2
-      agentroom:
-        specifier: workspace:*
-        version: link:../../packages/cli
       wrangler:
         specifier: 4.149.0
         version: 4.149.0(@cloudflare/workers-types@5.20261012.1)(@types/node@20.19.43)
