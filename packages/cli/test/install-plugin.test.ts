@@ -248,7 +248,7 @@ test("a failing plugin install exits 1 with its stderr and writes no status line
 test("an npm entry keeps the M1 mcp add path and says the plugin comes with the npm release", async () => {
   const s = setup(
     {},
-    "/Users/x/.npm/_npx/abc/node_modules/agentroom/dist/bin.js",
+    "/usr/local/lib/node_modules/@sauerapple/agentroom/dist/bin.js",
   );
   const t = s.ctx();
   expect(await main(["install", "claude"], t.ctx)).toBe(0);
