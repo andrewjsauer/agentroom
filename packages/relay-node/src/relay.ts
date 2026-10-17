@@ -115,7 +115,12 @@ export async function startRelay(opts: RelayOptions): Promise<RelayHandle> {
     port: opts.port,
     host,
     maxPayload: MAX_FRAME_BYTES,
-    verifyClient: () => accepting,
+    verifyClient: (info, done) => {
+      if (!accepting) return done(false);
+      // Real clients are Node processes and send no Origin; a browser page always does.
+      if (info.origin) return done(false, 403, "browser origins are refused");
+      done(true);
+    },
   });
   await new Promise<void>((resolve, reject) => {
     wss.once("listening", resolve);

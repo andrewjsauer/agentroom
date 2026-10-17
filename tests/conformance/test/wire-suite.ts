@@ -149,6 +149,12 @@ export function defineWireSuite(
       expect((await d.take("error")).code).toBe("bad_proto");
     });
 
+    test("an upgrade carrying an Origin header (a browser page) is HTTP 403", async () => {
+      await expect(
+        Conn.open(relay.url, newRoomId(), { Origin: "https://example.com" }),
+      ).rejects.toThrow("HTTP 403");
+    });
+
     test("rate limit: the put past the burst is refused and the connection stays open", async () => {
       const { c } = await create();
       for (let i = 0; i < 21; i++) c.send({ t: "put", blob: "AAAA" });

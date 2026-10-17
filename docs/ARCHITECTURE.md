@@ -92,6 +92,8 @@ The public relay-cf instance is the CLI default and its owner pays for its usage
 
 | Limit | Default | Scope | Enforced by | On breach |
 |---|---|---|---|---|
+| `UPGRADE_LIMITER` (`ratelimits` in wrangler.jsonc) | 60 upgrades / 60 s | WebSocket upgrades per address, counted per Cloudflare location (approximate by design) | relay-cf Worker, before the Durable Object | HTTP 429 |
+| Origin header | refused | any upgrade that carries `Origin` (browsers always send it; the Node clients never do) | both | HTTP 403 |
 | `MAX_ROOM_CONNS_PER_IP` | 10 | connections of any kind, per address per room | both (relay-cf also at upgrade) | relay-cf HTTP 429 at upgrade; `room_full` on `hello` |
 | `RATE_BURST` / `RATE_PER_SEC` | 20 / 2 per s | `put` token bucket per address per room, shared by that address's sockets and kept across reconnects | both (relay-cf in Durable Object memory) | `rate_limited`, frame dropped |
 
