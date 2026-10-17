@@ -10,6 +10,7 @@ import { type RelayHandle, startRelay } from "@agentroom/relay-node";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import {
   createRoomSession,
+  INBOX_BUDGET,
   ROOM_EXPIRED_TEXT,
   type RoomSession,
   readCurrent,
@@ -250,6 +251,49 @@ test("a persisted message with an out-of-range ts is skipped on restart; status 
   const s = again.status();
   expect(s.membersSeen.some((m) => m.member === "eve")).toBe(false);
   expect(again.inbox()).not.toContain("far-future");
+});
+
+test("inbox returns whole messages within the budget, marks only those read, and says how many remain", async () => {
+  const { session, b } = await pair();
+  const bodies = ["a", "b", "c", "d", "e"].map(
+    (c) => `${c}:${c.repeat(3_000)}`,
+  );
+  for (const body of bodies) await b.session.send({ kind: "fyi", body });
+  await until(() => session.status().unread === 5, 5000, "five unread");
+
+  const first = session.inbox();
+  expect(first.length).toBeLessThanOrEqual(INBOX_BUDGET);
+  expect(first).toContain(bodies[0]);
+  expect(first).toContain(bodies[1]);
+  expect(first).not.toContain("c:ccc");
+  expect(first).toContain("3 more unread. Call inbox again to read the rest.");
+  expect(session.status().unread).toBe(3);
+
+  const seen = [first];
+  while (session.status().unread > 0) seen.push(session.inbox());
+  const all = seen.join("\n");
+  for (const body of bodies) expect(all.split(body).length).toBe(2);
+  for (const text of seen)
+    expect(text.length).toBeLessThanOrEqual(INBOX_BUDGET);
+});
+
+test("inbox returns one message whole even when it alone is over the budget", async () => {
+  const { session, b } = await pair();
+  const refs = Array.from({ length: 20 }, (_, i) => ({
+    repo: "r".repeat(128),
+    path: `${i}/${"p".repeat(500)}`,
+  }));
+  const body = "z".repeat(8_000);
+  await b.session.send({ kind: "fyi", body, refs });
+  await b.session.send({ kind: "fyi", body: "second" });
+  await until(() => session.status().unread === 2, 5000, "two unread");
+  const text = session.inbox();
+  expect(text.length).toBeGreaterThan(INBOX_BUDGET);
+  expect(text).toContain(body);
+  expect(text).toContain(`19/${"p".repeat(500)}`);
+  expect(text).not.toContain("second");
+  expect(text).toContain("1 more unread.");
+  expect(await session.wait(1)).toContain("second");
 });
 
 test("status.json mirrors status() after an exchange", async () => {

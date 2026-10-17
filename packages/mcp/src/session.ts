@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -58,6 +58,15 @@ const EXTERNAL_READ_MS = 2_000;
 const ROOM_NAME_CHARS = 32;
 const RECENT_THREADS = 10;
 const PREVIEW_CHARS = 80;
+/**
+ * Character budget for one inbox or wait result: the same number as the prompt hook's
+ * CONTEXT_BUDGET (packages/cli/src/hook/submit.ts), so no client-side cut drops a message
+ * that was already marked read.
+ */
+export const INBOX_BUDGET = 9_000;
+
+const moreText = (n: number) =>
+  `${n} more unread. Call inbox again to read the rest.`;
 
 /** Non-terminal relay errors fail the oldest in-flight send with these texts (KTD13). */
 const RELAY_ERROR_TEXT: Partial<Record<ErrorCode, string>> = {
@@ -600,7 +609,23 @@ export function createRoomSession(opts: {
     const all = unreadMessages().filter(
       (m) => o.thread === undefined || m.env.thread === o.thread,
     );
-    const batch = all.slice(0, o.limit ?? DEFAULT_LIMIT);
+    const candidates = all.slice(0, o.limit ?? DEFAULT_LIMIT);
+    // One suffix for the sizing pass and the final frame, so the measured lengths are exact.
+    const hex = randomBytes(6).toString("hex");
+    const randomHex = () => hex;
+    // frameInbound joins per-message blocks with "\n", so prefix lengths add up. The first
+    // message is always returned whole, even over budget, so a large one cannot stall the inbox.
+    let count = 0;
+    let framed = -1;
+    for (const m of candidates) {
+      const next = framed + 1 + frameInbound([m.env], { randomHex }).length;
+      const rest = all.length - count - 1;
+      const total = next + (rest > 0 ? 1 + moreText(rest).length : 0);
+      if (count > 0 && total > INBOX_BUDGET) break;
+      framed = next;
+      count++;
+    }
+    const batch = candidates.slice(0, count);
     const parts: string[] = [];
     if (batch.length > 0) {
       for (const m of batch) unread.delete(m.env.id);
@@ -610,9 +635,14 @@ export function createRoomSession(opts: {
         ]);
         persistStatus();
       }
-      parts.push(frameInbound(batch.map((m) => m.env)));
+      parts.push(
+        frameInbound(
+          batch.map((m) => m.env),
+          { randomHex },
+        ),
+      );
       const more = all.length - batch.length;
-      if (more > 0) parts.push(`${more} more unread.`);
+      if (more > 0) parts.push(moreText(more));
     } else if (!gone) {
       parts.push("No unread messages.");
     }

@@ -222,7 +222,7 @@ export function createMcpServer(session: RoomSession): McpServer {
   server.registerTool(
     "inbox",
     {
-      description: `Return unread messages (oldest first, up to limit, optionally one thread) and mark them read. ${UNTRUSTED_NOTE}`,
+      description: `Return unread messages (oldest first, up to limit and about 9,000 characters, optionally one thread) and mark only those read; it says how many remain. ${UNTRUSTED_NOTE}`,
       inputSchema: InboxInput,
     },
     async (args) => text(session.inbox(args)),
